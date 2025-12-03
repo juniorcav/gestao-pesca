@@ -1,7 +1,6 @@
 
 import React, { useState } from 'react';
 import { useApp } from '../contexts/AppContext';
-import { useAuth } from '../contexts/AuthContext';
 import { 
   LayoutDashboard, 
   Users, 
@@ -11,11 +10,9 @@ import {
   Menu, 
   X,
   Anchor,
-  Globe,
   Sun,
   Moon,
-  ShieldCheck,
-  LogOut
+  ShieldCheck
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
@@ -52,7 +49,6 @@ const NavItem = ({ to, icon: Icon, label, active, onClick, isExternal }: any) =>
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { config, theme, toggleTheme } = useApp();
-  const { user, logout } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const location = useLocation();
 
@@ -64,6 +60,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     { to: '/checkin', icon: ConciergeBell, label: 'Check-in & Consumo' },
     { to: '/recursos', icon: Fish, label: 'Cadastros e Recursos' },
     { to: '/config', icon: Settings, label: 'Configurações' },
+    { to: '/super-admin', icon: ShieldCheck, label: 'Painel Admin (SaaS)' },
   ];
 
   return (
@@ -108,39 +105,11 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               onClick={() => setIsSidebarOpen(false)}
             />
           ))}
-
-          {user?.role === 'platform_admin' && (
-             <NavItem 
-                to="/super-admin"
-                icon={ShieldCheck}
-                label="Painel Super Admin"
-                active={location.pathname === '/super-admin'}
-                onClick={() => setIsSidebarOpen(false)}
-             />
-          )}
         </nav>
 
-        {/* User & Theme Footer */}
+        {/* Footer */}
         <div className="p-4 bg-nature-950 dark:bg-gray-900 bg-opacity-30 border-t border-nature-800 dark:border-gray-800 space-y-4">
-           
-           {user && (
-              <div className="flex items-center justify-between">
-                 <div className="flex items-center gap-2 overflow-hidden">
-                    <div className="h-8 w-8 rounded-full bg-nature-700 flex-shrink-0 flex items-center justify-center font-bold text-xs">
-                        {user.name.charAt(0)}
-                    </div>
-                    <div className="flex flex-col truncate">
-                        <span className="text-sm font-medium truncate">{user.name}</span>
-                        <span className="text-[10px] text-nature-400 uppercase">{user.role === 'platform_admin' ? 'Admin' : 'Gestor'}</span>
-                    </div>
-                 </div>
-                 <button onClick={logout} className="text-nature-400 hover:text-red-400" title="Sair">
-                    <LogOut size={18} />
-                 </button>
-              </div>
-           )}
-
-           <div className="flex items-center justify-between px-1 pt-2 border-t border-nature-800 dark:border-gray-700">
+           <div className="flex items-center justify-between px-1 pt-2">
              <span className="text-xs font-medium text-nature-300">Tema</span>
              <button 
                 onClick={toggleTheme}

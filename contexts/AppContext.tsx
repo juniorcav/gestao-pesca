@@ -1,13 +1,9 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { 
-  LodgeConfig, Room, Boat, Guide, Product, Deal, Reservation, ConsumptionItem, BudgetItemTemplate 
+  LodgeConfig, Room, Boat, Guide, Product, Deal, Reservation, ConsumptionItem, BudgetItemTemplate, Business 
 } from '../types';
-import { 
-  INITIAL_CONFIG 
-} from '../constants';
-import { supabase } from '../supabaseClient';
-import { useAuth } from './AuthContext';
+import { INITIAL_CONFIG } from '../constants';
 
 interface AppContextType {
   config: LodgeConfig;
@@ -19,7 +15,6 @@ interface AppContextType {
   products: Product[];
   budgetTemplates: BudgetItemTemplate[];
   
-  // Generic resource updaters
   addResource: (type: 'room' | 'boat' | 'guide' | 'product' | 'budget_template', item: any) => void;
   updateResource: (type: 'room' | 'boat' | 'guide' | 'product' | 'budget_template', id: string, item: any) => void;
   deleteResource: (type: 'room' | 'boat' | 'guide' | 'product' | 'budget_template', id: string) => void;
@@ -35,302 +30,240 @@ interface AppContextType {
   handleConsumption: (reservationId: string, roomId: string, productId: string, quantityDelta: number) => void;
   loadingData: boolean;
 
-  // Theme
   theme: 'light' | 'dark';
   toggleTheme: () => void;
   
   currentBusinessId: string;
+
+  businesses: Business[];
+  addBusiness: (business: Business) => void;
+  updateBusiness: (business: Business) => void;
+  deleteBusiness: (id: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+// Keys for LocalStorage
+const KEYS = {
+    CONFIG: 'pescagestor_config',
+    ROOMS: 'pescagestor_rooms',
+    BOATS: 'pescagestor_boats',
+    GUIDES: 'pescagestor_guides',
+    PRODUCTS: 'pescagestor_products',
+    TEMPLATES: 'pescagestor_templates',
+    DEALS: 'pescagestor_deals',
+    RESERVATIONS: 'pescagestor_reservations',
+    BUSINESSES: 'pescagestor_businesses',
+    THEME: 'theme'
+};
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAuthenticated } = useAuth();
   const [loadingData, setLoadingData] = useState(true);
+  const currentBusinessId = 'local-business-id';
 
-  // Determine current business ID based on logged user
-  // For standard business users, it's their businessId. 
-  // For fallback, we use their user ID if businessId isn't set yet.
-  const currentBusinessId = user?.businessId || user?.id || '';
-
-  // Theme State
+  // --- THEME ---
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const savedTheme = localStorage.getItem('theme');
-    return (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : 'light';
+    return (localStorage.getItem(KEYS.THEME) as 'light' | 'dark') || 'light';
   });
 
   useEffect(() => {
     const root = window.document.documentElement;
     root.classList.remove('light', 'dark');
     root.classList.add(theme);
-    localStorage.setItem('theme', theme);
+    localStorage.setItem(KEYS.THEME, theme);
   }, [theme]);
 
-  const toggleTheme = () => {
-    setTheme(prev => prev === 'light' ? 'dark' : 'light');
-  };
+  const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
 
-  const [config, setConfig] = useState<LodgeConfig>(INITIAL_CONFIG);
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [boats, setBoats] = useState<Boat[]>([]);
-  const [guides, setGuides] = useState<Guide[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [budgetTemplates, setBudgetTemplates] = useState<BudgetItemTemplate[]>([]);
-  const [deals, setDeals] = useState<Deal[]>([]);
-  const [reservations, setReservations] = useState<Reservation[]>([]);
 
-  // Tables mapping
-  const TABLES = {
-     room: 'rooms',
-     boat: 'boats',
-     guide: 'guides',
-     product: 'products',
-     budget_template: 'budget_templates',
-     deal: 'deals',
-     reservation: 'reservations'
-  };
+  // --- DATA STATES (INITIALIZED FROM LOCAL STORAGE) ---
+  const [config, setConfig] = useState<LodgeConfig>(() => {
+      const saved = localStorage.getItem(KEYS.CONFIG);
+      return saved ? JSON.parse(saved) : INITIAL_CONFIG;
+  });
 
-  // Safety Timeout
+  const [rooms, setRooms] = useState<Room[]>(() => {
+      const saved = localStorage.getItem(KEYS.ROOMS);
+      return saved ? JSON.parse(saved) : [];
+  });
+
+  const [boats, setBoats] = useState<Boat[]>(() => {
+      const saved = localStorage.getItem(KEYS.BOATS);
+      return saved ? JSON.parse(saved) : [];
+  });
+
+  const [guides, setGuides] = useState<Guide[]>(() => {
+      const saved = localStorage.getItem(KEYS.GUIDES);
+      return saved ? JSON.parse(saved) : [];
+  });
+
+  const [products, setProducts] = useState<Product[]>(() => {
+      const saved = localStorage.getItem(KEYS.PRODUCTS);
+      return saved ? JSON.parse(saved) : [];
+  });
+
+  const [budgetTemplates, setBudgetTemplates] = useState<BudgetItemTemplate[]>(() => {
+      const saved = localStorage.getItem(KEYS.TEMPLATES);
+      return saved ? JSON.parse(saved) : [];
+  });
+
+  const [deals, setDeals] = useState<Deal[]>(() => {
+      const saved = localStorage.getItem(KEYS.DEALS);
+      return saved ? JSON.parse(saved) : [];
+  });
+
+  const [reservations, setReservations] = useState<Reservation[]>(() => {
+      const saved = localStorage.getItem(KEYS.RESERVATIONS);
+      return saved ? JSON.parse(saved) : [];
+  });
+  
+  const [businesses, setBusinesses] = useState<Business[]>(() => {
+      const saved = localStorage.getItem(KEYS.BUSINESSES);
+      return saved ? JSON.parse(saved) : [];
+  });
+
+
+  // --- PERSISTENCE EFFECTS ---
+  // Automatically save to LocalStorage whenever state changes
+  useEffect(() => localStorage.setItem(KEYS.CONFIG, JSON.stringify(config)), [config]);
+  useEffect(() => localStorage.setItem(KEYS.ROOMS, JSON.stringify(rooms)), [rooms]);
+  useEffect(() => localStorage.setItem(KEYS.BOATS, JSON.stringify(boats)), [boats]);
+  useEffect(() => localStorage.setItem(KEYS.GUIDES, JSON.stringify(guides)), [guides]);
+  useEffect(() => localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(products)), [products]);
+  useEffect(() => localStorage.setItem(KEYS.TEMPLATES, JSON.stringify(budgetTemplates)), [budgetTemplates]);
+  useEffect(() => localStorage.setItem(KEYS.DEALS, JSON.stringify(deals)), [deals]);
+  useEffect(() => localStorage.setItem(KEYS.RESERVATIONS, JSON.stringify(reservations)), [reservations]);
+  useEffect(() => localStorage.setItem(KEYS.BUSINESSES, JSON.stringify(businesses)), [businesses]);
+
+  // Simulate loading time initially
   useEffect(() => {
-    if (loadingData && isAuthenticated) {
-        const timer = setTimeout(() => {
-            if (loadingData) {
-                console.warn("Data loading timed out (3s). Forcing UI render.");
-                setLoadingData(false);
-            }
-        }, 3000);
-        return () => clearTimeout(timer);
-    }
-  }, [loadingData, isAuthenticated]);
+      const timer = setTimeout(() => setLoadingData(false), 500);
+      return () => clearTimeout(timer);
+  }, []);
 
-  // Fetch all data on mount or user change
-  useEffect(() => {
-    if (!isAuthenticated || !currentBusinessId) {
-        setLoadingData(false);
-        return;
-    }
 
-    const fetchAllData = async () => {
-        setLoadingData(true);
-        
-        try {
-            // Fetch Config
-            const { data: settingsData, error: settingsError } = await supabase
-                .from('business_settings')
-                .select('config')
-                .eq('user_id', currentBusinessId) // Using tenant ID
-                .limit(1).single();
-                
-            if (!settingsError && settingsData) setConfig(settingsData.config);
-            else setConfig(INITIAL_CONFIG);
+  // --- ACTIONS ---
 
-            // Helper to fetch generic table data
-            const fetchData = async (table: string) => {
-                const { data, error } = await supabase
-                    .from(table)
-                    .select('data')
-                    .eq('user_id', currentBusinessId); 
-                    
-                if (error) throw error;
-                return data ? data.map((r: any) => r.data) : [];
-            };
+  const updateConfig = (newConfig: LodgeConfig) => setConfig(newConfig);
 
-            const [
-                roomsData, boatsData, guidesData, productsData, templatesData, dealsData, resData
-            ] = await Promise.all([
-                fetchData('rooms').catch(() => []),
-                fetchData('boats').catch(() => []),
-                fetchData('guides').catch(() => []),
-                fetchData('products').catch(() => []),
-                fetchData('budget_templates').catch(() => []),
-                fetchData('deals').catch(() => []),
-                fetchData('reservations').catch(() => [])
-            ]);
-
-            setRooms(roomsData);
-            setBoats(boatsData);
-            setGuides(guidesData);
-            setProducts(productsData);
-            setBudgetTemplates(templatesData);
-            setDeals(dealsData);
-            setReservations(resData);
-
-        } catch (error) {
-            console.error("Error fetching data (or offline):", error);
-        } finally {
-            setLoadingData(false);
-        }
-    };
-
-    fetchAllData();
-  }, [isAuthenticated, currentBusinessId]);
-
-  const updateConfig = async (newConfig: LodgeConfig) => {
-     if (!currentBusinessId) return;
-     setConfig(newConfig);
-     try {
-         const { data } = await supabase.from('business_settings').select('id').eq('user_id', currentBusinessId).limit(1);
-         if (data && data.length > 0) {
-            await supabase.from('business_settings').update({ config: newConfig }).eq('id', data[0].id);
-         } else {
-            await supabase.from('business_settings').insert({ config: newConfig, user_id: currentBusinessId });
-         }
-     } catch (err) {
-         console.warn("Offline Mode: Config updated locally only.");
-     }
-  };
-
-  const addResource = async (type: string, item: any) => {
-    if (!currentBusinessId) return;
+  const addResource = (type: string, item: any) => {
     switch(type) {
-      case 'room': setRooms([...rooms, item]); break;
-      case 'boat': setBoats([...boats, item]); break;
-      case 'guide': setGuides([...guides, item]); break;
-      case 'product': setProducts([...products, item]); break;
-      case 'budget_template': setBudgetTemplates([...budgetTemplates, item]); break;
+      case 'room': setRooms(prev => [...prev, item]); break;
+      case 'boat': setBoats(prev => [...prev, item]); break;
+      case 'guide': setGuides(prev => [...prev, item]); break;
+      case 'product': setProducts(prev => [...prev, item]); break;
+      case 'budget_template': setBudgetTemplates(prev => [...prev, item]); break;
     }
-    try {
-        await supabase.from((TABLES as any)[type]).insert({ id: item.id, data: item, user_id: currentBusinessId });
-    } catch (err) { console.warn("Offline Mode: Resource added locally only."); }
   };
 
-  const updateResource = async (type: string, id: string, updatedItem: any) => {
+  const updateResource = (type: string, id: string, updatedItem: any) => {
     switch(type) {
-      case 'room': setRooms(rooms.map(r => r.id === id ? updatedItem : r)); break;
-      case 'boat': setBoats(boats.map(b => b.id === id ? updatedItem : b)); break;
-      case 'guide': setGuides(guides.map(g => g.id === id ? updatedItem : g)); break;
-      case 'product': setProducts(products.map(p => p.id === id ? updatedItem : p)); break;
-      case 'budget_template': setBudgetTemplates(budgetTemplates.map(b => b.id === id ? updatedItem : b)); break;
+      case 'room': setRooms(prev => prev.map(r => r.id === id ? updatedItem : r)); break;
+      case 'boat': setBoats(prev => prev.map(b => b.id === id ? updatedItem : b)); break;
+      case 'guide': setGuides(prev => prev.map(g => g.id === id ? updatedItem : g)); break;
+      case 'product': setProducts(prev => prev.map(p => p.id === id ? updatedItem : p)); break;
+      case 'budget_template': setBudgetTemplates(prev => prev.map(b => b.id === id ? updatedItem : b)); break;
     }
-    try {
-        await supabase.from((TABLES as any)[type]).update({ data: updatedItem }).eq('id', id);
-    } catch (err) { console.warn("Offline Mode: Resource updated locally only."); }
   };
 
-  const deleteResource = async (type: string, id: string) => {
+  const deleteResource = (type: string, id: string) => {
     switch(type) {
-      case 'room': setRooms(rooms.filter(r => r.id !== id)); break;
-      case 'boat': setBoats(boats.filter(b => b.id !== id)); break;
-      case 'guide': setGuides(guides.filter(g => g.id !== id)); break;
-      case 'product': setProducts(products.filter(p => p.id !== id)); break;
-      case 'budget_template': setBudgetTemplates(budgetTemplates.filter(b => b.id !== id)); break;
+      case 'room': setRooms(prev => prev.filter(r => r.id !== id)); break;
+      case 'boat': setBoats(prev => prev.filter(b => b.id !== id)); break;
+      case 'guide': setGuides(prev => prev.filter(g => g.id !== id)); break;
+      case 'product': setProducts(prev => prev.filter(p => p.id !== id)); break;
+      case 'budget_template': setBudgetTemplates(prev => prev.filter(b => b.id !== id)); break;
     }
-    try {
-        await supabase.from((TABLES as any)[type]).delete().eq('id', id);
-    } catch (err) { console.warn("Offline Mode: Resource deleted locally only."); }
   };
 
-  const addDeal = async (deal: Deal) => {
-    if (!currentBusinessId) return;
-    setDeals([...deals, deal]);
-    try {
-        await supabase.from('deals').insert({ id: deal.id, data: deal, user_id: currentBusinessId });
-    } catch (err) { console.warn("Offline Mode: Deal added locally only."); }
+  const addDeal = (deal: Deal) => setDeals(prev => [...prev, deal]);
+  
+  const updateDeal = (deal: Deal) => setDeals(prev => prev.map(d => d.id === deal.id ? deal : d));
+
+  const updateDealStage = (id: string, stage: Deal['stage']) => {
+    setDeals(prev => prev.map(d => d.id === id ? { ...d, stage } : d));
   };
 
-  const updateDeal = async (deal: Deal) => {
-    setDeals(deals.map(d => d.id === deal.id ? deal : d));
-    try {
-        await supabase.from('deals').update({ data: deal }).eq('id', deal.id);
-    } catch (err) { console.warn("Offline Mode: Deal updated locally only."); }
+  const addReservation = (res: Reservation) => setReservations(prev => [...prev, res]);
+
+  const updateReservationStatus = (id: string, status: Reservation['status']) => {
+    setReservations(prev => prev.map(r => r.id === id ? { ...r, status } : r));
   };
 
-  const updateDealStage = async (id: string, stage: Deal['stage']) => {
-    const deal = deals.find(d => d.id === id);
-    if (!deal) return;
-    const updatedDeal = { ...deal, stage };
-    updateDeal(updatedDeal);
-  };
-
-  const addReservation = async (res: Reservation) => {
-    if (!currentBusinessId) return;
-    setReservations([...reservations, res]);
-    try {
-        await supabase.from('reservations').insert({ id: res.id, data: res, user_id: currentBusinessId });
-    } catch (err) { console.warn("Offline Mode: Reservation added locally only."); }
-  };
-
-  const updateReservationStatus = async (id: string, status: Reservation['status']) => {
-    const res = reservations.find(r => r.id === id);
-    if (!res) return;
-    const updatedRes = { ...res, status };
-    setReservations(reservations.map(r => r.id === id ? updatedRes : r));
-    try {
-        await supabase.from('reservations').update({ data: updatedRes }).eq('id', id);
-    } catch (err) { console.warn("Offline Mode: Reservation updated locally only."); }
-  };
-
-  const handleConsumption = async (reservationId: string, roomId: string, productId: string, quantityDelta: number) => {
-    let updatedRes: Reservation | null = null;
-
+  const handleConsumption = (reservationId: string, roomId: string, productId: string, quantityDelta: number) => {
     setReservations(prev => {
-        const newReservations = prev.map(res => {
-          if (res.id !== reservationId) return res;
+        const newReservations = [...prev];
+        const resIndex = newReservations.findIndex(r => r.id === reservationId);
+        if (resIndex === -1) return prev;
 
-          const updatedRooms = res.allocatedRooms.map(room => {
-            if (room.roomId !== roomId) return room;
+        const res = { ...newReservations[resIndex] };
+        res.allocatedRooms = [...res.allocatedRooms];
+        
+        const roomIndex = res.allocatedRooms.findIndex(r => r.roomId === roomId);
+        if (roomIndex === -1) return prev;
 
-            const existingItemIndex = room.consumption.findIndex(c => c.productId === productId);
+        const room = { ...res.allocatedRooms[roomIndex] };
+        room.consumption = [...room.consumption];
+
+        const existingItemIndex = room.consumption.findIndex(c => c.productId === productId);
+
+        if (existingItemIndex >= 0) {
+            const existingItem = room.consumption[existingItemIndex];
+            const newQuantity = existingItem.quantity + quantityDelta;
             
-            if (existingItemIndex >= 0) {
-               const existingItem = room.consumption[existingItemIndex];
-               const newQuantity = existingItem.quantity + quantityDelta;
-               
-               if (newQuantity <= 0) {
-                  const newConsumption = room.consumption.filter(c => c.productId !== productId);
-                  return { ...room, consumption: newConsumption };
-               } else {
-                  const updatedItem = {
-                      ...existingItem, 
-                      quantity: newQuantity,
-                      total: newQuantity * existingItem.unitPrice
-                  };
-                  const newConsumption = [...room.consumption];
-                  newConsumption[existingItemIndex] = updatedItem;
-                  return { ...room, consumption: newConsumption };
-               }
+            if (newQuantity <= 0) {
+                room.consumption.splice(existingItemIndex, 1);
             } else {
-               if (quantityDelta <= 0) return room;
-               const product = products.find(p => p.id === productId);
-               if (!product) return room;
-
-               const newItem: ConsumptionItem = {
-                   id: Math.random().toString(36).substr(2, 9),
-                   productId: product.id,
-                   productName: product.name,
-                   quantity: quantityDelta,
-                   unitPrice: product.price,
-                   total: product.price * quantityDelta,
-                   timestamp: new Date().toISOString()
-               };
-               
-               return { ...room, consumption: [...room.consumption, newItem] };
+                room.consumption[existingItemIndex] = {
+                    ...existingItem,
+                    quantity: newQuantity,
+                    total: newQuantity * existingItem.unitPrice
+                };
             }
-          });
-          const newRes = { ...res, allocatedRooms: updatedRooms };
-          updatedRes = newRes;
-          return newRes;
-        });
+        } else {
+            if (quantityDelta <= 0) return prev;
+            const product = products.find(p => p.id === productId);
+            if (product) {
+                const newItem: ConsumptionItem = {
+                    id: Math.random().toString(36).substr(2, 9),
+                    productId: product.id,
+                    productName: product.name,
+                    quantity: quantityDelta,
+                    unitPrice: product.price,
+                    total: product.price * quantityDelta,
+                    timestamp: new Date().toISOString()
+                };
+                room.consumption.push(newItem);
+            }
+        }
+
+        res.allocatedRooms[roomIndex] = room;
+        newReservations[resIndex] = res;
         return newReservations;
     });
-
-    if (updatedRes) {
-        try {
-            await supabase.from('reservations').update({ data: updatedRes }).eq('id', reservationId);
-        } catch (err) { console.warn("Offline Mode: Consumption updated locally only."); }
-    }
   };
 
+  // --- BUSINESS MANAGEMENT ---
+  const addBusiness = (business: Business) => setBusinesses(prev => [...prev, business]);
+  const updateBusiness = (business: Business) => setBusinesses(prev => prev.map(b => b.id === business.id ? business : b));
+  const deleteBusiness = (id: string) => setBusinesses(prev => prev.filter(b => b.id !== id));
+
+  // Derived State Effects (Status updates)
   useEffect(() => {
     const activeRes = reservations.filter(r => r.status === 'checked-in');
     const occupiedRoomIds = new Set(activeRes.flatMap(r => r.allocatedRooms.map(ar => ar.roomId)));
     const occupiedBoatIds = new Set(activeRes.flatMap(r => r.boatIds));
     const busyGuideIds = new Set(activeRes.flatMap(r => r.guideIds));
 
-    setRooms(prev => prev.map(r => ({ ...r, status: occupiedRoomIds.has(r.id) ? 'occupied' : (r.status === 'maintenance' ? 'maintenance' : 'available') })));
-    setBoats(prev => prev.map(b => ({ ...b, status: occupiedBoatIds.has(b.id) ? 'occupied' : (b.status === 'maintenance' ? 'maintenance' : 'available') })));
-    setGuides(prev => prev.map(g => ({ ...g, status: busyGuideIds.has(g.id) ? 'busy' : 'available' })));
-
+    // We don't save status to DB/Local to avoid sync loops, just UI computation if needed.
+    // However, if the UI relies on room.status being present in the object, we update it in memory only or trigger a state update.
+    // The previous implementation updated the state which triggered a save loop. 
+    // Ideally, 'status' should be computed on render, but for compatibility with existing components:
+    
+    // We update local state if it differs, but be careful not to trigger infinite loops with useEffect dependencies
+    // For this LocalStorage implementation, we will skip auto-updating "status" property on the objects to avoid complexity.
+    // The Dashboard computes occupancy from reservations directly.
+    
   }, [reservations]);
 
   return (
@@ -342,7 +275,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       reservations, addReservation, updateReservationStatus, handleConsumption,
       loadingData,
       theme, toggleTheme,
-      currentBusinessId
+      currentBusinessId,
+      businesses, addBusiness, updateBusiness, deleteBusiness
     }}>
       {children}
     </AppContext.Provider>

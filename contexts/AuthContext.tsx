@@ -1,7 +1,6 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
-import { supabase, isSupabaseConfigured } from '../supabaseClient';
 
 interface AuthResponse {
     success: boolean;
@@ -20,229 +19,113 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// MASTER CREDENTIALS (BACKDOOR FOR SAAS MANAGEMENT/TESTING)
 const MASTER_EMAIL = 'master@pescagestor.com';
-const MASTER_PASS = 'master123';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let mounted = true;
-
-    const initializeAuth = async () => {
+    // Load user from local storage on mount
+    const savedUser = localStorage.getItem('pescagestor_user');
+    if (savedUser) {
         try {
-            // Check for persistent demo session first
-            const demoUser = localStorage.getItem('demo_user_session');
-            if (demoUser) {
-                if (mounted) setUser(JSON.parse(demoUser));
-                setLoading(false);
-                return;
-            }
-
-            if (isSupabaseConfigured()) {
-                const { data: { session }, error } = await supabase.auth.getSession();
-                
-                if (session?.user && mounted) {
-                    await fetchProfile(session.user);
-                } else {
-                    setLoading(false);
-                }
-            } else {
-                setLoading(false);
-            }
-        } catch (err) {
-            console.warn("Auth initialization warning:", err);
-            setLoading(false);
+            setUser(JSON.parse(savedUser));
+        } catch (e) {
+            console.error("Error parsing user from local storage");
+            localStorage.removeItem('pescagestor_user');
         }
-    };
-
-    initializeAuth();
-
-    if (isSupabaseConfigured()) {
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-          if (!mounted) return;
-          
-          if (event === 'SIGNED_IN' && session?.user) {
-             if (!user || user.id !== session.user.id) {
-                await fetchProfile(session.user);
-             }
-          } else if (event === 'SIGNED_OUT') {
-             setUser(null);
-             localStorage.removeItem('demo_user_session'); 
-             setLoading(false);
-          } else if (!session) {
-             if (!localStorage.getItem('demo_user_session')) {
-                 setUser(null);
-             }
-             setLoading(false); // Ensure loading stops if no session
-          }
-        });
-        return () => {
-          subscription.unsubscribe();
-          mounted = false;
-        };
     }
+    setLoading(false);
   }, []);
-
-  const fetchProfile = async (authUser: any) => {
-      try {
-        // Fallback user structure in case profile fetch fails
-        const fallbackUser: User = {
-            id: authUser.id,
-            name: authUser.user_metadata?.name || 'Usuário',
-            email: authUser.email,
-            role: (authUser.user_metadata?.role as UserRole) || 'business',
-            avatarUrl: authUser.user_metadata?.avatar_url,
-            businessId: authUser.user_metadata?.business_id || authUser.id // Fallback ID
-        };
-
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', authUser.id)
-          .single();
-        
-        if (data) {
-          const mappedUser: User = {
-            id: data.id,
-            name: data.name || fallbackUser.name,
-            email: data.email || fallbackUser.email,
-            role: (data.role as UserRole) || fallbackUser.role,
-            avatarUrl: data.avatar_url,
-            businessId: data.business_id || data.id
-          };
-          setUser(mappedUser);
-        } else {
-            console.warn("Profile not found in DB, using fallback metadata.");
-            setUser(fallbackUser);
-        }
-      } catch (error) {
-        console.error("Error fetching profile:", error);
-        // Ensure we don't block login if profile fetch fails
-        setUser({
-            id: authUser.id,
-            name: authUser.user_metadata?.name || 'Usuário',
-            email: authUser.email,
-            role: authUser.user_metadata?.role || 'business',
-            avatarUrl: authUser.user_metadata?.avatar_url,
-            businessId: authUser.user_metadata?.business_id || authUser.id
-        });
-      } finally {
-        setLoading(false);
-      }
-  };
 
   const login = async (email: string, password: string): Promise<AuthResponse> => {
     setLoading(true);
-    try {
-        // MASTER USER CHECK
-        if (email === MASTER_EMAIL && password === MASTER_PASS) {
-             const adminUser: User = {
-                id: 'master-admin',
-                name: 'Master Admin',
-                email: email,
-                role: 'platform_admin',
-                avatarUrl: '',
-                businessId: 'platform'
-            };
-            setUser(adminUser);
-            localStorage.setItem('demo_user_session', JSON.stringify(adminUser));
+    
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Simple Mock Login Logic
+    let loggedUser: User;
+
+    if (email === MASTER_EMAIL && password === 'master123') {
+        loggedUser = {
+           id: 'master-admin',
+           name: 'Master Admin',
+           email: email,
+           role: 'platform_admin',
+           businessId: 'platform'
+       };
+    } else {
+        // Accept any login for demo purposes if valid email format
+        if (!email.includes('@')) {
             setLoading(false);
-            return { success: true };
+            return { success: false, error: 'E-mail inválido.' };
         }
-
-        if (!isSupabaseConfigured()) throw new Error("Supabase não configurado.");
-
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (error) throw error;
-        return { success: true };
-
-    } catch (err: any) {
-        setLoading(false);
-        const msg = (err.message || '').toLowerCase();
         
-        // Demo Fallback for connection issues
-        if (msg.includes('fetch') || msg.includes('network') || msg.includes('configured')) {
-            console.warn("Network error. Logging in as Demo User.");
-            const demoUser: User = {
-                id: 'demo-user-123',
-                name: 'Usuário Demo (Offline)',
-                email: email,
-                role: 'business',
-                avatarUrl: '',
-                businessId: 'demo-business-id'
-            };
-            setUser(demoUser);
-            localStorage.setItem('demo_user_session', JSON.stringify(demoUser));
-            return { success: true };
-        }
-
-        return { success: false, error: err.message };
+        loggedUser = {
+            id: 'local-user-' + Math.random().toString(36).substr(2, 9),
+            name: email.split('@')[0],
+            email: email,
+            role: 'business',
+            businessId: 'local-business'
+        };
     }
+
+    setUser(loggedUser);
+    localStorage.setItem('pescagestor_user', JSON.stringify(loggedUser));
+    setLoading(false);
+    return { success: true };
   };
 
   const signUp = async (email: string, password: string, name: string, role: UserRole, businessName?: string): Promise<AuthResponse> => {
      setLoading(true);
-     try {
-        if (!isSupabaseConfigured()) throw new Error("Supabase não configurado.");
+     await new Promise(resolve => setTimeout(resolve, 500));
 
-        const { error, data } = await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-               data: {
-                  name: name,
-                  role: role,
-                  business_name: businessName
-               }
-            }
-        });
+     const newUser: User = {
+        id: 'local-user-' + Math.random().toString(36).substr(2, 9),
+        name: name,
+        email: email,
+        role: role,
+        businessId: 'local-business-' + Math.random().toString(36).substr(2, 9)
+     };
 
-        if (error) throw error;
-
-        setLoading(false);
-        return { success: true };
-
-     } catch (err: any) {
-        setLoading(false);
-        return { success: false, error: err.message };
+     // Note: In a real local app, we might check if user exists in a local array of users.
+     // For this version, we just log them in immediately.
+     
+     setUser(newUser);
+     localStorage.setItem('pescagestor_user', JSON.stringify(newUser));
+     
+     // Also save initial business config locally if provided
+     if (role === 'business' && businessName) {
+        // We can trigger this in AppContext via effects, or just let the default config take over
      }
+
+     setLoading(false);
+     return { success: true };
   };
 
   const loginWithGoogle = async (role: UserRole = 'business'): Promise<AuthResponse> => {
     setLoading(true);
-    try {
-        if (!isSupabaseConfigured()) throw new Error("Supabase não configurado.");
-        const { error } = await supabase.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-                queryParams: { access_type: 'offline', prompt: 'consent' },
-                redirectTo: window.location.origin
-            }
-        });
-
-        if (error) throw error;
-        return { success: true };
-    } catch (err: any) {
-        setLoading(false);
-        return { success: false, error: err.message };
-    }
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
+    const googleUser: User = {
+        id: 'google-user-' + Math.random().toString(36).substr(2, 9),
+        name: 'Usuário Google',
+        email: 'usuario@gmail.com',
+        role: role,
+        businessId: 'local-business-google'
+    };
+    
+    setUser(googleUser);
+    localStorage.setItem('pescagestor_user', JSON.stringify(googleUser));
+    setLoading(false);
+    return { success: true };
   };
 
-  const logout = async () => {
-    setLoading(true);
-    if (isSupabaseConfigured()) {
-        try { await supabase.auth.signOut(); } catch (e) { console.warn(e); }
-    }
-    localStorage.removeItem('demo_user_session');
+  const logout = () => {
+    localStorage.removeItem('pescagestor_user');
     setUser(null);
-    setLoading(false);
   };
 
   return (
