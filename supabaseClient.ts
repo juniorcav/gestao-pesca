@@ -1,8 +1,16 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-// Helper to safely get environment variables without crashing if process is undefined
+// Helper to safely get environment variables in both Vite and standard environments
 const getEnv = (key: string) => {
+    // Check Vite (import.meta.env)
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+        // @ts-ignore
+        return import.meta.env[key];
+    }
+    
+    // Check Process (Legacy/Node)
     try {
         // @ts-ignore
         return process.env[key];

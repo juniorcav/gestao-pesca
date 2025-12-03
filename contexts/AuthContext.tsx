@@ -243,10 +243,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     access_type: 'offline',
                     prompt: 'consent',
                 },
-                redirectTo: window.location.origin,
-                data: {
-                    role: role // Pass role to metadata
-                }
+                redirectTo: window.location.origin
             }
         });
 
