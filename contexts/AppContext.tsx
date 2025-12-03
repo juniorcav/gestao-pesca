@@ -1,9 +1,10 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { 
   LodgeConfig, Room, Boat, Guide, Product, Deal, Reservation, ConsumptionItem, BudgetItemTemplate, Business 
 } from '../types';
 import { INITIAL_CONFIG } from '../constants';
+import { supabase } from '../supabaseClient';
+import { useAuth } from './AuthContext';
 
 interface AppContextType {
   config: LodgeConfig;
@@ -34,7 +35,6 @@ interface AppContextType {
   toggleTheme: () => void;
   
   currentBusinessId: string;
-
   businesses: Business[];
   addBusiness: (business: Business) => void;
   updateBusiness: (business: Business) => void;
@@ -43,110 +43,108 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Keys for LocalStorage
-const KEYS = {
-    CONFIG: 'pescagestor_config',
-    ROOMS: 'pescagestor_rooms',
-    BOATS: 'pescagestor_boats',
-    GUIDES: 'pescagestor_guides',
-    PRODUCTS: 'pescagestor_products',
-    TEMPLATES: 'pescagestor_templates',
-    DEALS: 'pescagestor_deals',
-    RESERVATIONS: 'pescagestor_reservations',
-    BUSINESSES: 'pescagestor_businesses',
-    THEME: 'theme'
-};
-
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
   const [loadingData, setLoadingData] = useState(true);
-  const currentBusinessId = 'local-business-id';
+  
+  // Identifying the tenant (business)
+  const currentBusinessId = user?.id || ''; // In this architecture, user_id of the owner IS the filter
 
   // --- THEME ---
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    return (localStorage.getItem(KEYS.THEME) as 'light' | 'dark') || 'light';
+    return (localStorage.getItem('theme') as 'light' | 'dark') || 'light';
   });
 
   useEffect(() => {
     const root = window.document.documentElement;
     root.classList.remove('light', 'dark');
     root.classList.add(theme);
-    localStorage.setItem(KEYS.THEME, theme);
+    localStorage.setItem('theme', theme);
   }, [theme]);
 
   const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
 
+  // --- STATE ---
+  const [config, setConfig] = useState<LodgeConfig>(INITIAL_CONFIG);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [boats, setBoats] = useState<Boat[]>([]);
+  const [guides, setGuides] = useState<Guide[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [budgetTemplates, setBudgetTemplates] = useState<BudgetItemTemplate[]>([]);
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [businesses, setBusinesses] = useState<Business[]>([]); // Only for Super Admin
 
-  // --- DATA STATES (INITIALIZED FROM LOCAL STORAGE) ---
-  const [config, setConfig] = useState<LodgeConfig>(() => {
-      const saved = localStorage.getItem(KEYS.CONFIG);
-      return saved ? JSON.parse(saved) : INITIAL_CONFIG;
-  });
-
-  const [rooms, setRooms] = useState<Room[]>(() => {
-      const saved = localStorage.getItem(KEYS.ROOMS);
-      return saved ? JSON.parse(saved) : [];
-  });
-
-  const [boats, setBoats] = useState<Boat[]>(() => {
-      const saved = localStorage.getItem(KEYS.BOATS);
-      return saved ? JSON.parse(saved) : [];
-  });
-
-  const [guides, setGuides] = useState<Guide[]>(() => {
-      const saved = localStorage.getItem(KEYS.GUIDES);
-      return saved ? JSON.parse(saved) : [];
-  });
-
-  const [products, setProducts] = useState<Product[]>(() => {
-      const saved = localStorage.getItem(KEYS.PRODUCTS);
-      return saved ? JSON.parse(saved) : [];
-  });
-
-  const [budgetTemplates, setBudgetTemplates] = useState<BudgetItemTemplate[]>(() => {
-      const saved = localStorage.getItem(KEYS.TEMPLATES);
-      return saved ? JSON.parse(saved) : [];
-  });
-
-  const [deals, setDeals] = useState<Deal[]>(() => {
-      const saved = localStorage.getItem(KEYS.DEALS);
-      return saved ? JSON.parse(saved) : [];
-  });
-
-  const [reservations, setReservations] = useState<Reservation[]>(() => {
-      const saved = localStorage.getItem(KEYS.RESERVATIONS);
-      return saved ? JSON.parse(saved) : [];
-  });
-  
-  const [businesses, setBusinesses] = useState<Business[]>(() => {
-      const saved = localStorage.getItem(KEYS.BUSINESSES);
-      return saved ? JSON.parse(saved) : [];
-  });
-
-
-  // --- PERSISTENCE EFFECTS ---
-  // Automatically save to LocalStorage whenever state changes
-  useEffect(() => localStorage.setItem(KEYS.CONFIG, JSON.stringify(config)), [config]);
-  useEffect(() => localStorage.setItem(KEYS.ROOMS, JSON.stringify(rooms)), [rooms]);
-  useEffect(() => localStorage.setItem(KEYS.BOATS, JSON.stringify(boats)), [boats]);
-  useEffect(() => localStorage.setItem(KEYS.GUIDES, JSON.stringify(guides)), [guides]);
-  useEffect(() => localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(products)), [products]);
-  useEffect(() => localStorage.setItem(KEYS.TEMPLATES, JSON.stringify(budgetTemplates)), [budgetTemplates]);
-  useEffect(() => localStorage.setItem(KEYS.DEALS, JSON.stringify(deals)), [deals]);
-  useEffect(() => localStorage.setItem(KEYS.RESERVATIONS, JSON.stringify(reservations)), [reservations]);
-  useEffect(() => localStorage.setItem(KEYS.BUSINESSES, JSON.stringify(businesses)), [businesses]);
-
-  // Simulate loading time initially
+  // --- DATA FETCHING (SUPABASE) ---
   useEffect(() => {
-      const timer = setTimeout(() => setLoadingData(false), 500);
-      return () => clearTimeout(timer);
-  }, []);
+    if (!user) {
+        setLoadingData(false);
+        return;
+    }
+
+    const fetchData = async () => {
+        setLoadingData(true);
+        try {
+            // 1. Config
+            const { data: configData } = await supabase.from('business_settings').select('config').eq('user_id', currentBusinessId).single();
+            if (configData) setConfig(configData.config);
+
+            // 2. Resources (Map JSONB 'data' column to object)
+            // Helper to unwrap Supabase response: { id: '...', user_id: '...', data: { ...fields } } -> { id: '...', ...fields }
+            const unwrap = (rows: any[]) => rows.map((row: any) => ({ ...row.data, id: row.id }));
+
+            const { data: r } = await supabase.from('rooms').select('*').eq('user_id', currentBusinessId);
+            if (r) setRooms(unwrap(r));
+
+            const { data: b } = await supabase.from('boats').select('*').eq('user_id', currentBusinessId);
+            if (b) setBoats(unwrap(b));
+
+            const { data: g } = await supabase.from('guides').select('*').eq('user_id', currentBusinessId);
+            if (g) setGuides(unwrap(g));
+
+            const { data: p } = await supabase.from('products').select('*').eq('user_id', currentBusinessId);
+            if (p) setProducts(unwrap(p));
+
+            const { data: t } = await supabase.from('budget_templates').select('*').eq('user_id', currentBusinessId);
+            if (t) setBudgetTemplates(unwrap(t));
+
+            const { data: d } = await supabase.from('deals').select('*').eq('user_id', currentBusinessId);
+            if (d) setDeals(unwrap(d));
+
+            const { data: res } = await supabase.from('reservations').select('*').eq('user_id', currentBusinessId);
+            if (res) setReservations(unwrap(res));
+
+            // Super Admin Data
+            if (user.role === 'platform_admin') {
+                const { data: biz } = await supabase.from('businesses').select('*');
+                if (biz) setBusinesses(biz as any);
+            }
+
+        } catch (error) {
+            console.error("Error loading data from Supabase:", error);
+        } finally {
+            setLoadingData(false);
+        }
+    };
+
+    fetchData();
+  }, [user, currentBusinessId]);
 
 
-  // --- ACTIONS ---
+  // --- CRUD ACTIONS (SUPABASE) ---
 
-  const updateConfig = (newConfig: LodgeConfig) => setConfig(newConfig);
+  const updateConfig = async (newConfig: LodgeConfig) => {
+      setConfig(newConfig);
+      // Upsert based on user_id (business owner)
+      const { error } = await supabase.from('business_settings').upsert(
+          { user_id: currentBusinessId, config: newConfig },
+          { onConflict: 'user_id' }
+      );
+      if (error) console.error("Error saving config:", error);
+  };
 
-  const addResource = (type: string, item: any) => {
+  const addResource = async (type: string, item: any) => {
+    // Optimistic Update
     switch(type) {
       case 'room': setRooms(prev => [...prev, item]); break;
       case 'boat': setBoats(prev => [...prev, item]); break;
@@ -154,9 +152,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       case 'product': setProducts(prev => [...prev, item]); break;
       case 'budget_template': setBudgetTemplates(prev => [...prev, item]); break;
     }
+
+    // Save to DB
+    const tableName = type === 'budget_template' ? 'budget_templates' : type + 's'; // pluralize
+    const { error } = await supabase.from(tableName).insert({
+        id: item.id,
+        user_id: currentBusinessId,
+        data: item
+    });
+    if (error) console.error(`Error adding ${type}:`, error);
   };
 
-  const updateResource = (type: string, id: string, updatedItem: any) => {
+  const updateResource = async (type: string, id: string, updatedItem: any) => {
+    // Optimistic
     switch(type) {
       case 'room': setRooms(prev => prev.map(r => r.id === id ? updatedItem : r)); break;
       case 'boat': setBoats(prev => prev.map(b => b.id === id ? updatedItem : b)); break;
@@ -164,9 +172,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       case 'product': setProducts(prev => prev.map(p => p.id === id ? updatedItem : p)); break;
       case 'budget_template': setBudgetTemplates(prev => prev.map(b => b.id === id ? updatedItem : b)); break;
     }
+
+    // Save to DB
+    const tableName = type === 'budget_template' ? 'budget_templates' : type + 's';
+    const { error } = await supabase.from(tableName).update({ data: updatedItem }).eq('id', id).eq('user_id', currentBusinessId);
+    if (error) console.error(`Error updating ${type}:`, error);
   };
 
-  const deleteResource = (type: string, id: string) => {
+  const deleteResource = async (type: string, id: string) => {
+    // Optimistic
     switch(type) {
       case 'room': setRooms(prev => prev.filter(r => r.id !== id)); break;
       case 'boat': setBoats(prev => prev.filter(b => b.id !== id)); break;
@@ -174,36 +188,87 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       case 'product': setProducts(prev => prev.filter(p => p.id !== id)); break;
       case 'budget_template': setBudgetTemplates(prev => prev.filter(b => b.id !== id)); break;
     }
+
+    // Save to DB
+    const tableName = type === 'budget_template' ? 'budget_templates' : type + 's';
+    const { error } = await supabase.from(tableName).delete().eq('id', id).eq('user_id', currentBusinessId);
+    if (error) console.error(`Error deleting ${type}:`, error);
   };
 
-  const addDeal = (deal: Deal) => setDeals(prev => [...prev, deal]);
+  // --- CRM ACTIONS ---
+
+  const addDeal = async (deal: Deal) => {
+      setDeals(prev => [...prev, deal]);
+      const { error } = await supabase.from('deals').insert({ id: deal.id, user_id: currentBusinessId, data: deal });
+      if (error) console.error("Error adding deal:", error);
+  };
   
-  const updateDeal = (deal: Deal) => setDeals(prev => prev.map(d => d.id === deal.id ? deal : d));
-
-  const updateDealStage = (id: string, stage: Deal['stage']) => {
-    setDeals(prev => prev.map(d => d.id === id ? { ...d, stage } : d));
+  const updateDeal = async (deal: Deal) => {
+      setDeals(prev => prev.map(d => d.id === deal.id ? deal : d));
+      const { error } = await supabase.from('deals').update({ data: deal }).eq('id', deal.id).eq('user_id', currentBusinessId);
+      if (error) console.error("Error updating deal:", error);
   };
 
-  const addReservation = (res: Reservation) => setReservations(prev => [...prev, res]);
+  const updateDealStage = async (id: string, stage: Deal['stage']) => {
+    let updatedDeal: Deal | undefined;
+    setDeals(prev => {
+        return prev.map(d => {
+            if (d.id === id) {
+                updatedDeal = { ...d, stage };
+                return updatedDeal;
+            }
+            return d;
+        });
+    });
 
-  const updateReservationStatus = (id: string, status: Reservation['status']) => {
-    setReservations(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+    if (updatedDeal) {
+        const { error } = await supabase.from('deals').update({ data: updatedDeal }).eq('id', id).eq('user_id', currentBusinessId);
+        if (error) console.error("Error updating deal stage:", error);
+    }
   };
 
-  const handleConsumption = (reservationId: string, roomId: string, productId: string, quantityDelta: number) => {
+  // --- RESERVATION ACTIONS ---
+
+  const addReservation = async (res: Reservation) => {
+      setReservations(prev => [...prev, res]);
+      const { error } = await supabase.from('reservations').insert({ id: res.id, user_id: currentBusinessId, data: res });
+      if (error) console.error("Error adding reservation:", error);
+  };
+
+  const updateReservationStatus = async (id: string, status: Reservation['status']) => {
+      let updatedRes: Reservation | undefined;
+      setReservations(prev => {
+          return prev.map(r => {
+              if (r.id === id) {
+                  updatedRes = { ...r, status };
+                  return updatedRes;
+              }
+              return r;
+          });
+      });
+
+      if (updatedRes) {
+          const { error } = await supabase.from('reservations').update({ data: updatedRes }).eq('id', id).eq('user_id', currentBusinessId);
+          if (error) console.error("Error updating reservation status:", error);
+      }
+  };
+
+  const handleConsumption = async (reservationId: string, roomId: string, productId: string, quantityDelta: number) => {
+    let updatedRes: Reservation | undefined;
+    
     setReservations(prev => {
         const newReservations = [...prev];
         const resIndex = newReservations.findIndex(r => r.id === reservationId);
         if (resIndex === -1) return prev;
 
         const res = { ...newReservations[resIndex] };
-        res.allocatedRooms = [...res.allocatedRooms];
+        res.allocatedRooms = [...res.allocatedRooms]; // shallow copy
         
         const roomIndex = res.allocatedRooms.findIndex(r => r.roomId === roomId);
         if (roomIndex === -1) return prev;
 
         const room = { ...res.allocatedRooms[roomIndex] };
-        room.consumption = [...room.consumption];
+        room.consumption = [...room.consumption]; // shallow copy
 
         const existingItemIndex = room.consumption.findIndex(c => c.productId === productId);
 
@@ -239,32 +304,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         res.allocatedRooms[roomIndex] = room;
         newReservations[resIndex] = res;
+        updatedRes = res;
         return newReservations;
     });
+
+    // Save to DB
+    if (updatedRes) {
+        const { error } = await supabase.from('reservations').update({ data: updatedRes }).eq('id', reservationId).eq('user_id', currentBusinessId);
+        if (error) console.error("Error saving consumption:", error);
+    }
   };
 
-  // --- BUSINESS MANAGEMENT ---
-  const addBusiness = (business: Business) => setBusinesses(prev => [...prev, business]);
-  const updateBusiness = (business: Business) => setBusinesses(prev => prev.map(b => b.id === business.id ? business : b));
-  const deleteBusiness = (id: string) => setBusinesses(prev => prev.filter(b => b.id !== id));
-
-  // Derived State Effects (Status updates)
-  useEffect(() => {
-    const activeRes = reservations.filter(r => r.status === 'checked-in');
-    const occupiedRoomIds = new Set(activeRes.flatMap(r => r.allocatedRooms.map(ar => ar.roomId)));
-    const occupiedBoatIds = new Set(activeRes.flatMap(r => r.boatIds));
-    const busyGuideIds = new Set(activeRes.flatMap(r => r.guideIds));
-
-    // We don't save status to DB/Local to avoid sync loops, just UI computation if needed.
-    // However, if the UI relies on room.status being present in the object, we update it in memory only or trigger a state update.
-    // The previous implementation updated the state which triggered a save loop. 
-    // Ideally, 'status' should be computed on render, but for compatibility with existing components:
-    
-    // We update local state if it differs, but be careful not to trigger infinite loops with useEffect dependencies
-    // For this LocalStorage implementation, we will skip auto-updating "status" property on the objects to avoid complexity.
-    // The Dashboard computes occupancy from reservations directly.
-    
-  }, [reservations]);
+  // --- BUSINESS MANAGEMENT (SUPER ADMIN) ---
+  const addBusiness = async (business: Business) => {
+      setBusinesses(prev => [...prev, business]);
+      await supabase.from('businesses').insert(business);
+  };
+  const updateBusiness = async (business: Business) => {
+      setBusinesses(prev => prev.map(b => b.id === business.id ? business : b));
+      await supabase.from('businesses').update(business).eq('id', business.id);
+  };
+  const deleteBusiness = async (id: string) => {
+      setBusinesses(prev => prev.filter(b => b.id !== id));
+      await supabase.from('businesses').delete().eq('id', id);
+  };
 
   return (
     <AppContext.Provider value={{

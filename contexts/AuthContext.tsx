@@ -1,5 +1,5 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase } from '../supabaseClient';
 import { User, UserRole } from '../types';
 
 interface AuthResponse {
@@ -19,86 +19,101 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const MASTER_EMAIL = 'master@pescagestor.com';
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Fetch user profile from 'profiles' table after Auth
+  const fetchProfile = async (authUserId: string, email: string) => {
+      try {
+          const { data, error } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', authUserId)
+              .single();
+
+          if (error) throw error;
+
+          if (data) {
+              const loadedUser: User = {
+                  id: data.id,
+                  email: data.email || email,
+                  name: data.name || email.split('@')[0],
+                  role: data.role as UserRole,
+                  businessId: data.business_id, // Important for Multi-tenancy
+                  avatarUrl: data.avatar_url
+              };
+              setUser(loadedUser);
+          }
+      } catch (error) {
+          console.error("Error fetching profile:", error);
+          // Fallback if profile doesn't exist yet (shouldn't happen with correct Triggers)
+          setUser({
+              id: authUserId,
+              email: email,
+              name: email.split('@')[0],
+              role: 'business' // Default fallback
+          });
+      }
+  };
+
   useEffect(() => {
-    // Load user from local storage on mount
-    const savedUser = localStorage.getItem('pescagestor_user');
-    if (savedUser) {
-        try {
-            setUser(JSON.parse(savedUser));
-        } catch (e) {
-            console.error("Error parsing user from local storage");
-            localStorage.removeItem('pescagestor_user');
+    // Check active session on mount
+    const checkSession = async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+            await fetchProfile(session.user.id, session.user.email!);
         }
-    }
-    setLoading(false);
+        setLoading(false);
+    };
+    
+    checkSession();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+        if (session?.user) {
+            await fetchProfile(session.user.id, session.user.email!);
+        } else {
+            setUser(null);
+        }
+        setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const login = async (email: string, password: string): Promise<AuthResponse> => {
     setLoading(true);
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 500));
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
-    // Simple Mock Login Logic
-    let loggedUser: User;
-
-    if (email === MASTER_EMAIL && password === 'master123') {
-        loggedUser = {
-           id: 'master-admin',
-           name: 'Master Admin',
-           email: email,
-           role: 'platform_admin',
-           businessId: 'platform'
-       };
-    } else {
-        // Accept any login for demo purposes if valid email format
-        if (!email.includes('@')) {
-            setLoading(false);
-            return { success: false, error: 'E-mail inválido.' };
-        }
-        
-        loggedUser = {
-            id: 'local-user-' + Math.random().toString(36).substr(2, 9),
-            name: email.split('@')[0],
-            email: email,
-            role: 'business',
-            businessId: 'local-business'
-        };
+    if (error) {
+        setLoading(false);
+        return { success: false, error: error.message };
     }
 
-    setUser(loggedUser);
-    localStorage.setItem('pescagestor_user', JSON.stringify(loggedUser));
-    setLoading(false);
+    // Profile fetch is handled by onAuthStateChange
     return { success: true };
   };
 
   const signUp = async (email: string, password: string, name: string, role: UserRole, businessName?: string): Promise<AuthResponse> => {
      setLoading(true);
-     await new Promise(resolve => setTimeout(resolve, 500));
-
-     const newUser: User = {
-        id: 'local-user-' + Math.random().toString(36).substr(2, 9),
-        name: name,
-        email: email,
-        role: role,
-        businessId: 'local-business-' + Math.random().toString(36).substr(2, 9)
-     };
-
-     // Note: In a real local app, we might check if user exists in a local array of users.
-     // For this version, we just log them in immediately.
      
-     setUser(newUser);
-     localStorage.setItem('pescagestor_user', JSON.stringify(newUser));
-     
-     // Also save initial business config locally if provided
-     if (role === 'business' && businessName) {
-        // We can trigger this in AppContext via effects, or just let the default config take over
+     // Pass metadata so the SQL Trigger can populate the profiles/businesses tables
+     const { data, error } = await supabase.auth.signUp({
+         email,
+         password,
+         options: {
+             data: {
+                 name,
+                 role,
+                 business_name: businessName
+             }
+         }
+     });
+
+     if (error) {
+         setLoading(false);
+         return { success: false, error: error.message };
      }
 
      setLoading(false);
@@ -106,25 +121,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loginWithGoogle = async (role: UserRole = 'business'): Promise<AuthResponse> => {
-    setLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 800));
-    
-    const googleUser: User = {
-        id: 'google-user-' + Math.random().toString(36).substr(2, 9),
-        name: 'Usuário Google',
-        email: 'usuario@gmail.com',
-        role: role,
-        businessId: 'local-business-google'
-    };
-    
-    setUser(googleUser);
-    localStorage.setItem('pescagestor_user', JSON.stringify(googleUser));
-    setLoading(false);
+    const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+            // We can't easily pass custom metadata in OAuth flow start without extra config,
+            // relying on user to update profile later or default trigger logic.
+            redirectTo: window.location.origin
+        }
+    });
+
+    if (error) return { success: false, error: error.message };
     return { success: true };
   };
 
-  const logout = () => {
-    localStorage.removeItem('pescagestor_user');
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
   };
 

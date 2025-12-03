@@ -1,6 +1,6 @@
-
 import React, { useState } from 'react';
 import { useApp } from '../contexts/AppContext';
+import { useAuth } from '../contexts/AuthContext';
 import { 
   LayoutDashboard, 
   Users, 
@@ -12,7 +12,9 @@ import {
   Anchor,
   Sun,
   Moon,
-  ShieldCheck
+  ShieldCheck,
+  LogOut,
+  User as UserIcon
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
@@ -49,19 +51,24 @@ const NavItem = ({ to, icon: Icon, label, active, onClick, isExternal }: any) =>
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { config, theme, toggleTheme } = useApp();
+  const { user, logout } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const location = useLocation();
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
 
   const navItems = [
-    { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { to: '/crm', icon: Users, label: 'CRM / Vendas' },
-    { to: '/checkin', icon: ConciergeBell, label: 'Check-in & Consumo' },
-    { to: '/recursos', icon: Fish, label: 'Cadastros e Recursos' },
-    { to: '/config', icon: Settings, label: 'Configurações' },
-    { to: '/super-admin', icon: ShieldCheck, label: 'Painel Admin (SaaS)' },
+    { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', roles: ['business', 'platform_admin'] },
+    { to: '/crm', icon: Users, label: 'CRM / Vendas', roles: ['business'] },
+    { to: '/checkin', icon: ConciergeBell, label: 'Check-in & Consumo', roles: ['business'] },
+    { to: '/recursos', icon: Fish, label: 'Cadastros e Recursos', roles: ['business'] },
+    { to: '/config', icon: Settings, label: 'Configurações', roles: ['business'] },
+    { to: '/super-admin', icon: ShieldCheck, label: 'Painel Admin (SaaS)', roles: ['platform_admin'] },
   ];
+
+  const filteredNavItems = navItems.filter(item => 
+    !item.roles || (user && item.roles.includes(user.role))
+  );
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900 overflow-hidden text-gray-900 dark:text-gray-100 transition-colors duration-300">
@@ -97,7 +104,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         </div>
 
         <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-          {navItems.map((item) => (
+          {filteredNavItems.map((item) => (
             <NavItem 
               key={item.to} 
               {...item} 
@@ -105,12 +112,40 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               onClick={() => setIsSidebarOpen(false)}
             />
           ))}
+          
+           {/* Link to Public Site */}
+           {user?.role === 'business' && (
+              <NavItem 
+                 to="/landing" 
+                 icon={Anchor} 
+                 label="Visualizar Site" 
+                 isExternal={true}
+              />
+           )}
         </nav>
 
-        {/* Footer */}
+        {/* User & Footer */}
         <div className="p-4 bg-nature-950 dark:bg-gray-900 bg-opacity-30 border-t border-nature-800 dark:border-gray-800 space-y-4">
+           {user && (
+               <div className="flex items-center space-x-3 px-2">
+                   <div className="h-8 w-8 rounded-full bg-nature-700 flex items-center justify-center">
+                       <UserIcon size={16} />
+                   </div>
+                   <div className="overflow-hidden">
+                       <p className="text-sm font-bold truncate">{user.name}</p>
+                       <p className="text-xs text-nature-400 truncate">{user.email}</p>
+                   </div>
+               </div>
+           )}
+           
            <div className="flex items-center justify-between px-1 pt-2">
-             <span className="text-xs font-medium text-nature-300">Tema</span>
+             <button 
+                onClick={logout}
+                className="flex items-center gap-2 text-xs text-red-300 hover:text-white transition-colors"
+             >
+                <LogOut size={14} /> Sair
+             </button>
+
              <button 
                 onClick={toggleTheme}
                 className="p-1.5 rounded-full bg-nature-800 dark:bg-gray-800 text-nature-200 hover:text-white transition-colors"

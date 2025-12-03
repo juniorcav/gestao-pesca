@@ -1,7 +1,7 @@
-
 import React from 'react';
 import { useApp } from '../contexts/AppContext';
-import { MapPin, Phone, Mail, Anchor, Fish, CheckCircle, ArrowRight, Instagram, Facebook, MessageCircle, Star } from 'lucide-react';
+import { MapPin, Phone, Mail, Anchor, Fish, CheckCircle, ArrowRight, Instagram, Facebook, MessageCircle, Star, UserCircle2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 const LandingPage = () => {
   const { config, budgetTemplates } = useApp();
@@ -42,6 +42,9 @@ const LandingPage = () => {
               <a href="#location" className="hover:text-nature-300 transition-colors">Localização</a>
             </div>
             <div className="flex items-center gap-4">
+               <Link to="/login" className="text-sm font-medium hover:text-nature-300 flex items-center gap-1">
+                   <UserCircle2 size={18} /> Área do Cliente
+               </Link>
                <button 
                  onClick={() => handleWhatsAppClick()}
                  className="bg-nature-600 hover:bg-nature-700 text-white px-5 py-2 rounded-full font-bold text-sm transition-all shadow-lg flex items-center gap-2"

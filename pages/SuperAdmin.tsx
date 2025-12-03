@@ -1,14 +1,20 @@
-
 import React, { useState } from 'react';
 import { useApp } from '../contexts/AppContext';
+import { useAuth } from '../contexts/AuthContext';
 import { Business } from '../types';
 import { Building2, Search, Plus, Trash2, CheckCircle, XCircle, Edit2, X, Save } from 'lucide-react';
+import { Navigate } from 'react-router-dom';
 
 const SuperAdmin = () => {
-    // Removed useAuth usage
+    const { user } = useAuth();
     const { businesses, addBusiness, updateBusiness, deleteBusiness } = useApp();
     const [searchTerm, setSearchTerm] = useState('');
     
+    // Extra Protection Layer
+    if (user?.role !== 'platform_admin') {
+        return <Navigate to="/dashboard" replace />;
+    }
+
     // Modal State
     const [showModal, setShowModal] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
