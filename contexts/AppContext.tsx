@@ -1,3 +1,4 @@
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { 
   LodgeConfig, Room, Boat, Guide, Product, Deal, Reservation, ConsumptionItem, BudgetItemTemplate 
@@ -6,7 +7,9 @@ import {
   INITIAL_CONFIG, MOCK_ROOMS, MOCK_BOATS, MOCK_GUIDES, MOCK_PRODUCTS, MOCK_DEALS, MOCK_RESERVATIONS, MOCK_BUDGET_TEMPLATES 
 } from '../constants';
 import { supabase } from '../supabaseClient';
-import { useAuth } from './AuthContext';
+
+// Constant ID to act as the single user for this instance
+const DEFAULT_TENANT_ID = 'default-business-owner';
 
 interface AppContextType {
   config: LodgeConfig;
@@ -42,7 +45,6 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
   const [loadingData, setLoadingData] = useState(true);
 
   // Theme State
@@ -82,34 +84,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
      reservation: 'reservations'
   };
 
-  // Fetch all data on mount or user login
+  // Fetch all data on mount
   useEffect(() => {
     const fetchAllData = async () => {
         setLoadingData(true);
         
         try {
-            // Landing page check (no user)
-            if (!user) {
-                // Try to fetch public data for landing page usage if needed
-                 const { data: settingsData } = await supabase.from('business_settings').select('config').limit(1).single();
-                 if (settingsData) setConfig(settingsData.config);
-                 
-                 // Fetch Budget Templates for Packages Section in Landing Page
-                 const { data: tmplData } = await supabase.from('budget_templates').select('data');
-                 if (tmplData) setBudgetTemplates(tmplData.map((r: any) => r.data));
-
-                 setLoadingData(false);
-                 return;
-            }
-
             // Fetch Config
-            const { data: settingsData, error: settingsError } = await supabase.from('business_settings').select('config').eq('user_id', user.id).limit(1).single();
+            const { data: settingsData, error: settingsError } = await supabase.from('business_settings').select('config').limit(1).single();
             if (!settingsError && settingsData) setConfig(settingsData.config);
-            else setConfig(INITIAL_CONFIG); // Reset if new user
+            else setConfig(INITIAL_CONFIG); // Reset if new
 
             // Helper to fetch generic table data
             const fetchData = async (table: string) => {
-                const { data, error } = await supabase.from(table).select('data').eq('user_id', user.id);
+                // We try to filter by our default tenant ID if the column exists, 
+                // but since auth is removed, we treat the DB as single-tenant for now or fetch all.
+                // Ideally, we fetch everything or filter by a static ID.
+                const { data, error } = await supabase.from(table).select('data'); 
                 if (error) throw error;
                 return data ? data.map((r: any) => r.data) : [];
             };
@@ -138,17 +129,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     fetchAllData();
-  }, [user]);
+  }, []);
 
   const updateConfig = async (newConfig: LodgeConfig) => {
      setConfig(newConfig);
-     if (!user) return;
      try {
-         const { data } = await supabase.from('business_settings').select('id').eq('user_id', user.id).limit(1);
+         const { data } = await supabase.from('business_settings').select('id').limit(1);
          if (data && data.length > 0) {
             await supabase.from('business_settings').update({ config: newConfig }).eq('id', data[0].id);
          } else {
-            await supabase.from('business_settings').insert({ config: newConfig, user_id: user.id });
+            await supabase.from('business_settings').insert({ config: newConfig, user_id: DEFAULT_TENANT_ID });
          }
      } catch (err) {
          console.warn("Offline Mode: Config updated locally only.");
@@ -165,9 +155,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       case 'budget_template': setBudgetTemplates([...budgetTemplates, item]); break;
     }
     // Sync DB
-    if (!user) return;
     try {
-        await supabase.from((TABLES as any)[type]).insert({ id: item.id, data: item, user_id: user.id });
+        await supabase.from((TABLES as any)[type]).insert({ id: item.id, data: item, user_id: DEFAULT_TENANT_ID });
     } catch (err) { console.warn("Offline Mode: Resource added locally only."); }
   };
 
@@ -180,9 +169,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       case 'budget_template': setBudgetTemplates(budgetTemplates.map(b => b.id === id ? updatedItem : b)); break;
     }
     // Sync DB
-    if (!user) return;
     try {
-        await supabase.from((TABLES as any)[type]).update({ data: updatedItem }).eq('id', id).eq('user_id', user.id);
+        await supabase.from((TABLES as any)[type]).update({ data: updatedItem }).eq('id', id);
     } catch (err) { console.warn("Offline Mode: Resource updated locally only."); }
   };
 
@@ -195,25 +183,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       case 'budget_template': setBudgetTemplates(budgetTemplates.filter(b => b.id !== id)); break;
     }
     // Sync DB
-    if (!user) return;
     try {
-        await supabase.from((TABLES as any)[type]).delete().eq('id', id).eq('user_id', user.id);
+        await supabase.from((TABLES as any)[type]).delete().eq('id', id);
     } catch (err) { console.warn("Offline Mode: Resource deleted locally only."); }
   };
 
   const addDeal = async (deal: Deal) => {
     setDeals([...deals, deal]);
-    if (!user) return;
     try {
-        await supabase.from('deals').insert({ id: deal.id, data: deal, user_id: user.id });
+        await supabase.from('deals').insert({ id: deal.id, data: deal, user_id: DEFAULT_TENANT_ID });
     } catch (err) { console.warn("Offline Mode: Deal added locally only."); }
   };
 
   const updateDeal = async (deal: Deal) => {
     setDeals(deals.map(d => d.id === deal.id ? deal : d));
-    if (!user) return;
     try {
-        await supabase.from('deals').update({ data: deal }).eq('id', deal.id).eq('user_id', user.id);
+        await supabase.from('deals').update({ data: deal }).eq('id', deal.id);
     } catch (err) { console.warn("Offline Mode: Deal updated locally only."); }
   };
 
@@ -226,9 +211,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addReservation = async (res: Reservation) => {
     setReservations([...reservations, res]);
-    if (!user) return;
     try {
-        await supabase.from('reservations').insert({ id: res.id, data: res, user_id: user.id });
+        await supabase.from('reservations').insert({ id: res.id, data: res, user_id: DEFAULT_TENANT_ID });
     } catch (err) { console.warn("Offline Mode: Reservation added locally only."); }
   };
 
@@ -237,9 +221,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!res) return;
     const updatedRes = { ...res, status };
     setReservations(reservations.map(r => r.id === id ? updatedRes : r));
-    if (!user) return;
     try {
-        await supabase.from('reservations').update({ data: updatedRes }).eq('id', id).eq('user_id', user.id);
+        await supabase.from('reservations').update({ data: updatedRes }).eq('id', id);
     } catch (err) { console.warn("Offline Mode: Reservation updated locally only."); }
   };
 
@@ -300,9 +283,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     // Sync DB after state update logic completes
-    if (updatedRes && user) {
+    if (updatedRes) {
         try {
-            await supabase.from('reservations').update({ data: updatedRes }).eq('id', reservationId).eq('user_id', user.id);
+            await supabase.from('reservations').update({ data: updatedRes }).eq('id', reservationId);
         } catch (err) { console.warn("Offline Mode: Consumption updated locally only."); }
     }
   };

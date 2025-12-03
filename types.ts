@@ -1,7 +1,8 @@
 
+
 export type ResourceType = 'room' | 'boat' | 'guide' | 'product' | 'budget_template';
 
-export type UserRole = 'angler' | 'business' | 'admin';
+export type UserRole = 'business' | 'angler' | 'admin';
 
 export interface User {
   id: string;
@@ -9,7 +10,7 @@ export interface User {
   email: string;
   role: UserRole;
   avatarUrl?: string;
-  businessId?: string; // Links user to a specific lodge configuration
+  businessId?: string;
 }
 
 export interface Room {
