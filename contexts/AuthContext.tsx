@@ -20,7 +20,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// MASTER CREDENTIALS (BACKDOOR FOR SAAS MANAGEMENT)
+// MASTER CREDENTIALS (BACKDOOR FOR SAAS MANAGEMENT/TESTING)
 const MASTER_EMAIL = 'master@pescagestor.com';
 const MASTER_PASS = 'master123';
 
@@ -33,33 +33,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const initializeAuth = async () => {
         try {
-            const sessionCheckPromise = async () => {
-                const demoUser = localStorage.getItem('demo_user_session');
-                if (demoUser) {
-                    if (mounted) setUser(JSON.parse(demoUser));
-                    return;
+            // Check for persistent demo session first
+            const demoUser = localStorage.getItem('demo_user_session');
+            if (demoUser) {
+                if (mounted) setUser(JSON.parse(demoUser));
+                setLoading(false);
+                return;
+            }
+
+            if (isSupabaseConfigured()) {
+                const { data: { session }, error } = await supabase.auth.getSession();
+                
+                if (session?.user && mounted) {
+                    await fetchProfile(session.user);
+                } else {
+                    setLoading(false);
                 }
-
-                if (isSupabaseConfigured()) {
-                    const { data: { session }, error } = await supabase.auth.getSession();
-                    if (error) throw error;
-                    
-                    if (session?.user && mounted) {
-                        await fetchProfile(session.user);
-                    }
-                }
-            };
-
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error("Auth Check Timeout")), 2500)
-            );
-
-            await Promise.race([sessionCheckPromise(), timeoutPromise]);
-
+            } else {
+                setLoading(false);
+            }
         } catch (err) {
-            console.warn("Auth initialization finished with warning (or timeout):", err);
-        } finally {
-            if (mounted) setLoading(false);
+            console.warn("Auth initialization warning:", err);
+            setLoading(false);
         }
     };
 
@@ -70,7 +65,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (!mounted) return;
           
           if (event === 'SIGNED_IN' && session?.user) {
-             await fetchProfile(session.user);
+             if (!user || user.id !== session.user.id) {
+                await fetchProfile(session.user);
+             }
           } else if (event === 'SIGNED_OUT') {
              setUser(null);
              localStorage.removeItem('demo_user_session'); 
@@ -79,40 +76,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
              if (!localStorage.getItem('demo_user_session')) {
                  setUser(null);
              }
-             setLoading(false);
+             setLoading(false); // Ensure loading stops if no session
           }
         });
         return () => {
           subscription.unsubscribe();
           mounted = false;
         };
-    } else {
-        return () => { mounted = false; };
     }
   }, []);
 
-  const fetchProfile = async (authUser: any, retries = 2) => {
+  const fetchProfile = async (authUser: any) => {
       try {
+        // Fallback user structure in case profile fetch fails
         const fallbackUser: User = {
             id: authUser.id,
             name: authUser.user_metadata?.name || 'Usuário',
             email: authUser.email,
-            role: (authUser.user_metadata?.role as UserRole) || 'angler',
+            role: (authUser.user_metadata?.role as UserRole) || 'business',
             avatarUrl: authUser.user_metadata?.avatar_url,
-            businessId: authUser.user_metadata?.business_id
+            businessId: authUser.user_metadata?.business_id || authUser.id // Fallback ID
         };
 
-        let { data, error } = await supabase
+        const { data, error } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', authUser.id)
           .single();
         
-        if (!data && retries > 0) {
-            await new Promise(res => setTimeout(res, 500));
-            return fetchProfile(authUser, retries - 1);
-        }
-
         if (data) {
           const mappedUser: User = {
             id: data.id,
@@ -120,29 +111,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             email: data.email || fallbackUser.email,
             role: (data.role as UserRole) || fallbackUser.role,
             avatarUrl: data.avatar_url,
-            businessId: data.business_id // Crucial for multi-tenancy
+            businessId: data.business_id || data.id
           };
           setUser(mappedUser);
         } else {
+            console.warn("Profile not found in DB, using fallback metadata.");
             setUser(fallbackUser);
         }
       } catch (error) {
-        console.error("Error fetching profile, using fallback:", error);
+        console.error("Error fetching profile:", error);
+        // Ensure we don't block login if profile fetch fails
         setUser({
             id: authUser.id,
             name: authUser.user_metadata?.name || 'Usuário',
             email: authUser.email,
-            role: authUser.user_metadata?.role || 'angler',
+            role: authUser.user_metadata?.role || 'business',
             avatarUrl: authUser.user_metadata?.avatar_url,
-            businessId: authUser.user_metadata?.business_id
+            businessId: authUser.user_metadata?.business_id || authUser.id
         });
+      } finally {
+        setLoading(false);
       }
   };
 
   const login = async (email: string, password: string): Promise<AuthResponse> => {
     setLoading(true);
     try {
-        // MASTER USER CHECK (Priority)
+        // MASTER USER CHECK
         if (email === MASTER_EMAIL && password === MASTER_PASS) {
              const adminUser: User = {
                 id: 'master-admin',
@@ -158,7 +153,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return { success: true };
         }
 
-        if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
+        if (!isSupabaseConfigured()) throw new Error("Supabase não configurado.");
 
         const { error } = await supabase.auth.signInWithPassword({
           email,
@@ -169,11 +164,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: true };
 
     } catch (err: any) {
+        setLoading(false);
         const msg = (err.message || '').toLowerCase();
         
-        if (msg.includes('fetch') || msg.includes('network') || msg.includes('configured') || msg === 'load failed') {
-            console.warn("Network/Config error. Logging in as Demo User.");
-            // Determine role based on what user was trying to access or fallback
+        // Demo Fallback for connection issues
+        if (msg.includes('fetch') || msg.includes('network') || msg.includes('configured')) {
+            console.warn("Network error. Logging in as Demo User.");
             const demoUser: User = {
                 id: 'demo-user-123',
                 name: 'Usuário Demo (Offline)',
@@ -184,12 +180,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             };
             setUser(demoUser);
             localStorage.setItem('demo_user_session', JSON.stringify(demoUser));
-            setLoading(false);
             return { success: true };
         }
 
-        console.error("Login error:", err.message);
-        setLoading(false);
         return { success: false, error: err.message };
     }
   };
@@ -197,65 +190,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signUp = async (email: string, password: string, name: string, role: UserRole, businessName?: string): Promise<AuthResponse> => {
      setLoading(true);
      try {
-        if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
+        if (!isSupabaseConfigured()) throw new Error("Supabase não configurado.");
 
-        // Generate a business ID if creating a business account
-        const newBusinessId = role === 'business' ? Math.random().toString(36).substr(2, 9) : undefined;
-
-        const { error } = await supabase.auth.signUp({
+        const { error, data } = await supabase.auth.signUp({
             email,
             password,
             options: {
                data: {
                   name: name,
                   role: role,
-                  business_id: newBusinessId, // Link user to new business
-                  business_name: businessName // Passed to DB trigger to create table entry
+                  business_name: businessName
                }
             }
         });
 
         if (error) throw error;
+
+        setLoading(false);
         return { success: true };
 
      } catch (err: any) {
-        const msg = (err.message || '').toLowerCase();
-
-        if (msg.includes('fetch') || msg.includes('network') || msg.includes('configured') || msg === 'load failed') {
-            console.warn("Network/Config error. Creating Demo User.");
-            const demoBusinessId = 'demo-business-' + Math.random().toString(36).substr(2,9);
-            const demoUser: User = {
-                id: 'demo-user-' + Math.random().toString(36).substr(2,9),
-                name: name,
-                email: email,
-                role: role,
-                avatarUrl: '',
-                businessId: role === 'business' ? demoBusinessId : undefined
-            };
-            setUser(demoUser);
-            localStorage.setItem('demo_user_session', JSON.stringify(demoUser));
-            setLoading(false);
-            return { success: true };
-        }
-
-        console.error("Signup error:", err.message);
         setLoading(false);
         return { success: false, error: err.message };
      }
   };
 
-  const loginWithGoogle = async (role: UserRole = 'angler'): Promise<AuthResponse> => {
+  const loginWithGoogle = async (role: UserRole = 'business'): Promise<AuthResponse> => {
     setLoading(true);
     try {
-        if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
+        if (!isSupabaseConfigured()) throw new Error("Supabase não configurado.");
         const { error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                queryParams: {
-                    access_type: 'offline',
-                    prompt: 'consent',
-                },
-                redirectTo: window.location.origin,
+                queryParams: { access_type: 'offline', prompt: 'consent' },
+                redirectTo: window.location.origin
             }
         });
 
@@ -263,18 +231,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: true };
     } catch (err: any) {
         setLoading(false);
-        return { success: false, error: err.message || 'Erro ao conectar com Google (verifique config).' };
+        return { success: false, error: err.message };
     }
   };
 
   const logout = async () => {
+    setLoading(true);
     if (isSupabaseConfigured()) {
-        try {
-            await supabase.auth.signOut();
-        } catch (e) { console.warn("SignOut error", e); }
+        try { await supabase.auth.signOut(); } catch (e) { console.warn(e); }
     }
     localStorage.removeItem('demo_user_session');
     setUser(null);
+    setLoading(false);
   };
 
   return (

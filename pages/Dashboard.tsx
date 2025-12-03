@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { useApp } from '../contexts/AppContext';
 import { 
@@ -22,9 +23,6 @@ const StatCard = ({ title, value, icon: Icon, color, subtext }: any) => (
 
 const Dashboard = () => {
   const { reservations, rooms, deals } = useApp();
-
-  // Generate public link based on current location
-  const publicLink = `${window.location.href.split('#')[0]}#/landing`;
 
   // Calculate Metrics
   const activeReservations = reservations.filter(r => r.status === 'checked-in');
@@ -66,16 +64,6 @@ const Dashboard = () => {
            <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Visão Geral</h2>
            <span className="text-sm text-gray-500 dark:text-gray-400">Hoje, {new Date().toLocaleDateString('pt-BR')}</span>
         </div>
-        
-        <a 
-            href={publicLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors"
-        >
-            <ExternalLink size={16} className="text-nature-600 dark:text-nature-400" />
-            Ver Site Público
-        </a>
       </div>
 
       {/* KPI Cards */}

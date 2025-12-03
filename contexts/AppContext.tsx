@@ -4,7 +4,7 @@ import {
   LodgeConfig, Room, Boat, Guide, Product, Deal, Reservation, ConsumptionItem, BudgetItemTemplate 
 } from '../types';
 import { 
-  INITIAL_CONFIG, MOCK_ROOMS, MOCK_BOATS, MOCK_GUIDES, MOCK_PRODUCTS, MOCK_DEALS, MOCK_RESERVATIONS, MOCK_BUDGET_TEMPLATES 
+  INITIAL_CONFIG 
 } from '../constants';
 import { supabase } from '../supabaseClient';
 import { useAuth } from './AuthContext';
@@ -39,17 +39,19 @@ interface AppContextType {
   theme: 'light' | 'dark';
   toggleTheme: () => void;
   
-  currentBusinessId: string | undefined;
+  currentBusinessId: string;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const [loadingData, setLoadingData] = useState(true);
 
-  // Use the business ID from the logged in user, or fall back to user ID (for solo owners), or 'public' for landing
-  const currentBusinessId = user?.businessId || user?.id || 'demo-business-id';
+  // Determine current business ID based on logged user
+  // For standard business users, it's their businessId. 
+  // For fallback, we use their user ID if businessId isn't set yet.
+  const currentBusinessId = user?.businessId || user?.id || '';
 
   // Theme State
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -88,13 +90,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
      reservation: 'reservations'
   };
 
-  // Fetch all data when user (tenant) changes
+  // Safety Timeout
   useEffect(() => {
-    // If we are platform admin, we might not want to load data for a specific business yet
-    // unless we are "impersonating". For MVP, platform admin sees empty or demo data in app view.
-    if (user?.role === 'platform_admin') {
+    if (loadingData && isAuthenticated) {
+        const timer = setTimeout(() => {
+            if (loadingData) {
+                console.warn("Data loading timed out (3s). Forcing UI render.");
+                setLoadingData(false);
+            }
+        }, 3000);
+        return () => clearTimeout(timer);
+    }
+  }, [loadingData, isAuthenticated]);
+
+  // Fetch all data on mount or user change
+  useEffect(() => {
+    if (!isAuthenticated || !currentBusinessId) {
         setLoadingData(false);
-        return; 
+        return;
     }
 
     const fetchAllData = async () => {
@@ -105,7 +118,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const { data: settingsData, error: settingsError } = await supabase
                 .from('business_settings')
                 .select('config')
-                .eq('user_id', currentBusinessId) // Assuming schema uses user_id as business_id link
+                .eq('user_id', currentBusinessId) // Using tenant ID
                 .limit(1).single();
                 
             if (!settingsError && settingsData) setConfig(settingsData.config);
@@ -116,41 +129,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 const { data, error } = await supabase
                     .from(table)
                     .select('data')
-                    .eq('user_id', currentBusinessId); // Filter by Business ID
+                    .eq('user_id', currentBusinessId); 
                     
                 if (error) throw error;
                 return data ? data.map((r: any) => r.data) : [];
             };
 
-            setRooms(await fetchData('rooms'));
-            setBoats(await fetchData('boats'));
-            setGuides(await fetchData('guides'));
-            setProducts(await fetchData('products'));
-            setBudgetTemplates(await fetchData('budget_templates'));
-            setDeals(await fetchData('deals'));
-            setReservations(await fetchData('reservations'));
+            const [
+                roomsData, boatsData, guidesData, productsData, templatesData, dealsData, resData
+            ] = await Promise.all([
+                fetchData('rooms').catch(() => []),
+                fetchData('boats').catch(() => []),
+                fetchData('guides').catch(() => []),
+                fetchData('products').catch(() => []),
+                fetchData('budget_templates').catch(() => []),
+                fetchData('deals').catch(() => []),
+                fetchData('reservations').catch(() => [])
+            ]);
+
+            setRooms(roomsData);
+            setBoats(boatsData);
+            setGuides(guidesData);
+            setProducts(productsData);
+            setBudgetTemplates(templatesData);
+            setDeals(dealsData);
+            setReservations(resData);
 
         } catch (error) {
             console.error("Error fetching data (or offline):", error);
-            // Only use mocks if we are truly offline/demo and have no data
-            if (currentBusinessId.includes('demo')) {
-                setRooms([]);
-                setBoats([]);
-                setGuides([]);
-                setProducts([]);
-                setBudgetTemplates([]);
-                setDeals([]);
-                setReservations([]);
-            }
         } finally {
             setLoadingData(false);
         }
     };
 
     fetchAllData();
-  }, [user, currentBusinessId]);
+  }, [isAuthenticated, currentBusinessId]);
 
   const updateConfig = async (newConfig: LodgeConfig) => {
+     if (!currentBusinessId) return;
      setConfig(newConfig);
      try {
          const { data } = await supabase.from('business_settings').select('id').eq('user_id', currentBusinessId).limit(1);
@@ -165,6 +181,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addResource = async (type: string, item: any) => {
+    if (!currentBusinessId) return;
     switch(type) {
       case 'room': setRooms([...rooms, item]); break;
       case 'boat': setBoats([...boats, item]); break;
@@ -204,6 +221,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addDeal = async (deal: Deal) => {
+    if (!currentBusinessId) return;
     setDeals([...deals, deal]);
     try {
         await supabase.from('deals').insert({ id: deal.id, data: deal, user_id: currentBusinessId });
@@ -225,6 +243,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addReservation = async (res: Reservation) => {
+    if (!currentBusinessId) return;
     setReservations([...reservations, res]);
     try {
         await supabase.from('reservations').insert({ id: res.id, data: res, user_id: currentBusinessId });

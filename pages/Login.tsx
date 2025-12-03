@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { UserRole } from '../types';
 import { useNavigate, Link } from 'react-router-dom';
-import { Anchor, Mail, Lock, Chrome, ArrowLeft, Briefcase, ShieldCheck } from 'lucide-react';
+import { Anchor, Mail, Lock, Chrome, Briefcase, ShieldCheck } from 'lucide-react';
 
 const Login = () => {
   const { login, loginWithGoogle, signUp, loading, user } = useAuth();
@@ -34,31 +34,33 @@ const Login = () => {
 
     if (mode === 'login') {
         result = await login(email, password);
+        if (result.success) {
+            // Navigation handled by App.tsx useEffect based on user state change
+            // But checking special case for Master Admin immediate redirect
+            if (email === 'master@pescagestor.com') {
+                navigate('/super-admin');
+            } else {
+                navigate('/');
+            }
+        } else {
+             // Handle Error Display
+             let msg = result.error || 'Erro desconhecido.';
+             if (msg.includes('Invalid login credentials')) msg = 'E-mail ou senha incorretos.';
+             setError(msg);
+        }
     } else {
+        // SIGNUP FLOW
         result = await signUp(email, password, name, activeTab, businessName);
         if (result.success) {
-            alert("Cadastro realizado! Você pode fazer login agora.");
-            setMode('login');
-            if (!result.error) setPassword('');
-            return;
+            alert("Cadastro realizado com sucesso! Faça login para acessar.");
+            setMode('login'); // Switch back to login mode
+            setPassword(''); // Clear password for security
+        } else {
+             let msg = result.error || 'Erro desconhecido.';
+             if (msg.includes('User already registered')) msg = 'Este e-mail já está cadastrado.';
+             if (msg.includes('Password should be')) msg = 'A senha deve ter pelo menos 6 caracteres.';
+             setError(msg);
         }
-    }
-
-    if (result.success) {
-       // Logic handled in useEffect or App.tsx, but we force navigation here for UX response
-       // Note: The context user might not be updated immediately in this closure
-       if (email === 'master@pescagestor.com') {
-           navigate('/super-admin');
-       } else {
-           navigate('/');
-       }
-    } else {
-      let msg = result.error || 'Erro desconhecido.';
-      if (msg.includes('Invalid login credentials')) msg = 'E-mail ou senha incorretos.';
-      if (msg.includes('User already registered')) msg = 'Este e-mail já está cadastrado.';
-      if (msg.includes('Password should be')) msg = 'A senha deve ter pelo menos 6 caracteres.';
-      
-      setError(msg);
     }
   };
 
@@ -80,9 +82,6 @@ const Login = () => {
         />
         <div className="relative z-10 flex flex-col justify-between p-12 w-full text-white">
           <div>
-            <Link to="/landing" className="flex items-center gap-2 text-nature-300 hover:text-white transition-colors mb-8 text-sm font-medium">
-               <ArrowLeft size={16} /> Voltar ao Site
-            </Link>
             <div className="flex items-center gap-3">
                <div className="h-10 w-10 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center">
                   <Anchor className="text-white" />

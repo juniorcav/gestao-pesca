@@ -1,6 +1,8 @@
+
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../contexts/AppContext';
-import { Upload, Save, MapPin, Fish, Briefcase, Info, Image as ImageIcon, Video, Trash2, Plus, Globe, Copy, ExternalLink, Check } from 'lucide-react';
+import { Upload, Save, MapPin, Fish, Briefcase, Info, Image as ImageIcon, Video, Trash2, Plus, Sparkles } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 
 const SERVICE_OPTIONS = [
   "Pousada Completa",
@@ -17,7 +19,9 @@ const Settings = () => {
   const { config, updateConfig } = useApp();
   const [localConfig, setLocalConfig] = useState(config);
   const [saved, setSaved] = useState(false);
-  const [copied, setCopied] = useState(false);
+  
+  const location = useLocation();
+  const isFirstSetup = location.state?.firstSetup;
 
   // Sincroniza o formulário local quando os dados do banco (contexto) são carregados
   useEffect(() => {
@@ -26,20 +30,11 @@ const Settings = () => {
     }
   }, [config]);
 
-  // Generate the public link based on current location (Robust method)
-  const publicLink = `${window.location.href.split('#')[0]}#/landing`;
-
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     updateConfig(localConfig);
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
-  };
-
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(publicLink);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -105,6 +100,31 @@ const Settings = () => {
 
   return (
     <div className="max-w-4xl mx-auto bg-white dark:bg-gray-800 p-8 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 transition-colors">
+      
+      {/* Welcome Banner for First Setup */}
+      {isFirstSetup && (
+        <div className="mb-8 bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 p-6 rounded-r-xl animate-fade-in-up">
+            <div className="flex items-start">
+                <div className="flex-shrink-0">
+                    <Sparkles className="h-6 w-6 text-blue-500" />
+                </div>
+                <div className="ml-4">
+                    <h3 className="text-lg leading-6 font-bold text-blue-800 dark:text-blue-300">
+                        Bem-vindo ao PescaGestor Pro!
+                    </h3>
+                    <div className="mt-2 text-sm text-blue-700 dark:text-blue-200">
+                        <p>
+                            Para começar com o pé direito, <strong>configure os dados do seu negócio abaixo</strong>. 
+                        </p>
+                        <p className="mt-1">
+                            Essas informações serão usadas nos <strong>Orçamentos em PDF</strong>.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-6 border-b dark:border-gray-700 pb-4">
         <div>
            <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Configurações do Negócio</h2>
@@ -113,41 +133,6 @@ const Settings = () => {
         <div className="h-10 w-10 bg-nature-100 dark:bg-nature-900 rounded-full flex items-center justify-center text-nature-700 dark:text-nature-400">
            <Info size={24} />
         </div>
-      </div>
-      
-      {/* PUBLIC LINK SECTION */}
-      <div className="mb-8 bg-gradient-to-r from-nature-50 to-blue-50 dark:from-nature-900/20 dark:to-blue-900/20 p-6 rounded-xl border border-nature-100 dark:border-nature-800 shadow-sm">
-         <div className="flex items-start justify-between mb-4">
-             <div>
-                 <h3 className="text-lg font-bold text-nature-800 dark:text-nature-300 flex items-center gap-2">
-                     <Globe size={20} /> Link de Acesso Público
-                 </h3>
-                 <p className="text-sm text-nature-600 dark:text-nature-400">Este é o link da sua Landing Page. Compartilhe com seus clientes.</p>
-             </div>
-             <a 
-                href={publicLink} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-sm bg-white dark:bg-gray-800 text-nature-700 dark:text-nature-300 px-3 py-1.5 rounded-lg border border-nature-200 dark:border-nature-700 hover:bg-nature-50 dark:hover:bg-gray-700 flex items-center gap-2 font-medium shadow-sm"
-             >
-                <ExternalLink size={16} /> Abrir Site
-             </a>
-         </div>
-         
-         <div className="flex items-center gap-2">
-             <div className="flex-1 bg-white dark:bg-gray-900 border border-nature-200 dark:border-gray-700 rounded-lg p-3 text-sm text-gray-600 dark:text-gray-300 font-mono overflow-x-auto whitespace-nowrap shadow-inner">
-                 {publicLink}
-             </div>
-             <button 
-                onClick={handleCopyLink}
-                className={`px-4 py-3 rounded-lg font-bold text-white transition-all flex items-center gap-2 shadow-md
-                   ${copied ? 'bg-green-600 hover:bg-green-700' : 'bg-nature-600 hover:bg-nature-700'}
-                `}
-             >
-                {copied ? <Check size={18} /> : <Copy size={18} />}
-                {copied ? 'Copiado!' : 'Copiar'}
-             </button>
-         </div>
       </div>
       
       <form onSubmit={handleSave} className="space-y-8">
