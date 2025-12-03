@@ -25,49 +25,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check active session
-    const checkSession = async () => {
-      try {
-        // 1. Check if Supabase is configured and reachable
-        if (isSupabaseConfigured()) {
-            const { data: { session }, error } = await supabase.auth.getSession();
-            if (error) throw error;
-            
-            if (session?.user) {
-                await fetchProfile(session.user);
-                return;
-            }
-        }
-        
-        // 2. Fallback: Check for Local Demo Session
-        const demoUser = localStorage.getItem('demo_user_session');
-        if (demoUser) {
-            setUser(JSON.parse(demoUser));
-        }
+    let mounted = true;
 
-      } catch (err) {
-        console.warn("Auth check failed, falling back to offline/demo mode:", err);
-        // Try local storage even if Supabase check failed (e.g. network error)
-        const demoUser = localStorage.getItem('demo_user_session');
-        if (demoUser) setUser(JSON.parse(demoUser));
-      } finally {
-        setLoading(false);
-      }
+    const initializeAuth = async () => {
+        try {
+            // 1. Create a promise for the actual session check
+            const sessionCheckPromise = async () => {
+                // Fallback: Check for Local Demo Session first for speed
+                const demoUser = localStorage.getItem('demo_user_session');
+                if (demoUser) {
+                    if (mounted) setUser(JSON.parse(demoUser));
+                    return;
+                }
+
+                // Check Supabase
+                if (isSupabaseConfigured()) {
+                    const { data: { session }, error } = await supabase.auth.getSession();
+                    if (error) throw error;
+                    
+                    if (session?.user && mounted) {
+                        await fetchProfile(session.user);
+                    }
+                }
+            };
+
+            // 2. Create a timeout promise (max 2.5 seconds waiting for Supabase)
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error("Auth Check Timeout")), 2500)
+            );
+
+            // 3. Race them. If Supabase is slow, we stop waiting and show the login screen.
+            await Promise.race([sessionCheckPromise(), timeoutPromise]);
+
+        } catch (err) {
+            console.warn("Auth initialization finished with warning (or timeout):", err);
+            // If it timed out, we just let the user see the login screen.
+            // Any background success from Supabase will eventually update via onAuthStateChange
+        } finally {
+            if (mounted) setLoading(false);
+        }
     };
 
-    checkSession();
+    initializeAuth();
 
     // Listen for auth changes only if configured
     if (isSupabaseConfigured()) {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+          if (!mounted) return;
+          
           if (event === 'SIGNED_IN' && session?.user) {
+             // Don't set loading true here to avoid UI flicker, just fetch background
              await fetchProfile(session.user);
           } else if (event === 'SIGNED_OUT') {
              setUser(null);
-             localStorage.removeItem('demo_user_session'); // Clear demo session too
+             localStorage.removeItem('demo_user_session'); 
              setLoading(false);
           } else if (!session) {
-             // Only clear if we don't have a demo session active
              if (!localStorage.getItem('demo_user_session')) {
                  setUser(null);
              }
@@ -76,13 +89,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
         return () => {
           subscription.unsubscribe();
+          mounted = false;
         };
+    } else {
+        return () => { mounted = false; };
     }
   }, []);
 
   // Helper with retry logic to handle race conditions between Auth and DB Trigger
-  const fetchProfile = async (authUser: any, retries = 3) => {
+  const fetchProfile = async (authUser: any, retries = 2) => {
       try {
+        // Fast path: use metadata immediately while fetching DB
+        const fallbackUser: User = {
+            id: authUser.id,
+            name: authUser.user_metadata?.name || 'Usuário',
+            email: authUser.email,
+            role: (authUser.user_metadata?.role as UserRole) || 'angler',
+            avatarUrl: authUser.user_metadata?.avatar_url
+        };
+
+        // Attempt DB Fetch
         let { data, error } = await supabase
           .from('profiles')
           .select('*')
@@ -91,37 +117,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         // Retry logic if profile not found immediately (Trigger lag)
         if (!data && retries > 0) {
-            console.log(`Profile not found, retrying... (${retries} left)`);
-            await new Promise(res => setTimeout(res, 1000));
+            // Short delay
+            await new Promise(res => setTimeout(res, 500));
             return fetchProfile(authUser, retries - 1);
         }
 
         if (data) {
           const mappedUser: User = {
             id: data.id,
-            name: data.name || authUser.user_metadata?.name || 'Usuário',
-            email: data.email || authUser.email,
-            role: (data.role as UserRole) || authUser.user_metadata?.role || 'angler',
+            name: data.name || fallbackUser.name,
+            email: data.email || fallbackUser.email,
+            role: (data.role as UserRole) || fallbackUser.role,
             avatarUrl: data.avatar_url,
             businessId: data.business_id
           };
           setUser(mappedUser);
         } else {
             // Fallback: If DB fetch fails entirely, use Auth Metadata
-            console.warn("Could not fetch profile from DB. Using Auth Metadata.");
-            const fallbackUser: User = {
-                id: authUser.id,
-                name: authUser.user_metadata?.name || 'Usuário',
-                email: authUser.email,
-                role: authUser.user_metadata?.role || 'angler',
-                avatarUrl: authUser.user_metadata?.avatar_url
-            };
+            // This ensures the user can still login even if the 'profiles' table is missing/erroring
             setUser(fallbackUser);
         }
       } catch (error) {
-        console.error("Error fetching profile:", error);
-      } finally {
-        setLoading(false);
+        console.error("Error fetching profile, using fallback:", error);
+        // Ensure we at least set the user from the auth token
+        setUser({
+            id: authUser.id,
+            name: authUser.user_metadata?.name || 'Usuário',
+            email: authUser.email,
+            role: authUser.user_metadata?.role || 'angler',
+            avatarUrl: authUser.user_metadata?.avatar_url
+        });
       }
   };
 
@@ -218,7 +243,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     access_type: 'offline',
                     prompt: 'consent',
                 },
-                redirectTo: window.location.origin
+                redirectTo: window.location.origin,
+                data: {
+                    role: role // Pass role to metadata
+                }
             }
         });
 
