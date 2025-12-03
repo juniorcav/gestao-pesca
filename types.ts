@@ -2,7 +2,16 @@
 
 export type ResourceType = 'room' | 'boat' | 'guide' | 'product' | 'budget_template';
 
-export type UserRole = 'business' | 'angler' | 'admin';
+export type UserRole = 'business' | 'angler' | 'admin' | 'platform_admin';
+
+export interface Business {
+  id: string;
+  name: string;
+  ownerId: string;
+  plan: 'free' | 'pro' | 'enterprise';
+  status: 'active' | 'suspended';
+  createdAt: string;
+}
 
 export interface User {
   id: string;
@@ -10,7 +19,7 @@ export interface User {
   email: string;
   role: UserRole;
   avatarUrl?: string;
-  businessId?: string;
+  businessId?: string; // Link to the specific business
 }
 
 export interface Room {

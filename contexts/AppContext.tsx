@@ -7,9 +7,7 @@ import {
   INITIAL_CONFIG, MOCK_ROOMS, MOCK_BOATS, MOCK_GUIDES, MOCK_PRODUCTS, MOCK_DEALS, MOCK_RESERVATIONS, MOCK_BUDGET_TEMPLATES 
 } from '../constants';
 import { supabase } from '../supabaseClient';
-
-// Constant ID to act as the single user for this instance
-const DEFAULT_TENANT_ID = 'default-business-owner';
+import { useAuth } from './AuthContext';
 
 interface AppContextType {
   config: LodgeConfig;
@@ -40,12 +38,18 @@ interface AppContextType {
   // Theme
   theme: 'light' | 'dark';
   toggleTheme: () => void;
+  
+  currentBusinessId: string | undefined;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
   const [loadingData, setLoadingData] = useState(true);
+
+  // Use the business ID from the logged in user, or fall back to user ID (for solo owners), or 'public' for landing
+  const currentBusinessId = user?.businessId || user?.id || 'demo-business-id';
 
   // Theme State
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -84,23 +88,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
      reservation: 'reservations'
   };
 
-  // Fetch all data on mount
+  // Fetch all data when user (tenant) changes
   useEffect(() => {
+    // If we are platform admin, we might not want to load data for a specific business yet
+    // unless we are "impersonating". For MVP, platform admin sees empty or demo data in app view.
+    if (user?.role === 'platform_admin') {
+        setLoadingData(false);
+        return; 
+    }
+
     const fetchAllData = async () => {
         setLoadingData(true);
         
         try {
             // Fetch Config
-            const { data: settingsData, error: settingsError } = await supabase.from('business_settings').select('config').limit(1).single();
+            const { data: settingsData, error: settingsError } = await supabase
+                .from('business_settings')
+                .select('config')
+                .eq('user_id', currentBusinessId) // Assuming schema uses user_id as business_id link
+                .limit(1).single();
+                
             if (!settingsError && settingsData) setConfig(settingsData.config);
-            else setConfig(INITIAL_CONFIG); // Reset if new
+            else setConfig(INITIAL_CONFIG);
 
             // Helper to fetch generic table data
             const fetchData = async (table: string) => {
-                // We try to filter by our default tenant ID if the column exists, 
-                // but since auth is removed, we treat the DB as single-tenant for now or fetch all.
-                // Ideally, we fetch everything or filter by a static ID.
-                const { data, error } = await supabase.from(table).select('data'); 
+                const { data, error } = await supabase
+                    .from(table)
+                    .select('data')
+                    .eq('user_id', currentBusinessId); // Filter by Business ID
+                    
                 if (error) throw error;
                 return data ? data.map((r: any) => r.data) : [];
             };
@@ -114,31 +131,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setReservations(await fetchData('reservations'));
 
         } catch (error) {
-            console.error("Error fetching data, falling back to mock/empty:", error);
-            // Fallback to empty/mock if DB fails
-            setRooms(MOCK_ROOMS);
-            setBoats(MOCK_BOATS);
-            setGuides(MOCK_GUIDES);
-            setProducts(MOCK_PRODUCTS);
-            setBudgetTemplates(MOCK_BUDGET_TEMPLATES);
-            setDeals(MOCK_DEALS);
-            setReservations(MOCK_RESERVATIONS);
+            console.error("Error fetching data (or offline):", error);
+            // Only use mocks if we are truly offline/demo and have no data
+            if (currentBusinessId.includes('demo')) {
+                setRooms([]);
+                setBoats([]);
+                setGuides([]);
+                setProducts([]);
+                setBudgetTemplates([]);
+                setDeals([]);
+                setReservations([]);
+            }
         } finally {
             setLoadingData(false);
         }
     };
 
     fetchAllData();
-  }, []);
+  }, [user, currentBusinessId]);
 
   const updateConfig = async (newConfig: LodgeConfig) => {
      setConfig(newConfig);
      try {
-         const { data } = await supabase.from('business_settings').select('id').limit(1);
+         const { data } = await supabase.from('business_settings').select('id').eq('user_id', currentBusinessId).limit(1);
          if (data && data.length > 0) {
             await supabase.from('business_settings').update({ config: newConfig }).eq('id', data[0].id);
          } else {
-            await supabase.from('business_settings').insert({ config: newConfig, user_id: DEFAULT_TENANT_ID });
+            await supabase.from('business_settings').insert({ config: newConfig, user_id: currentBusinessId });
          }
      } catch (err) {
          console.warn("Offline Mode: Config updated locally only.");
@@ -146,7 +165,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addResource = async (type: string, item: any) => {
-    // Update Local State Optimistically
     switch(type) {
       case 'room': setRooms([...rooms, item]); break;
       case 'boat': setBoats([...boats, item]); break;
@@ -154,9 +172,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       case 'product': setProducts([...products, item]); break;
       case 'budget_template': setBudgetTemplates([...budgetTemplates, item]); break;
     }
-    // Sync DB
     try {
-        await supabase.from((TABLES as any)[type]).insert({ id: item.id, data: item, user_id: DEFAULT_TENANT_ID });
+        await supabase.from((TABLES as any)[type]).insert({ id: item.id, data: item, user_id: currentBusinessId });
     } catch (err) { console.warn("Offline Mode: Resource added locally only."); }
   };
 
@@ -168,7 +185,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       case 'product': setProducts(products.map(p => p.id === id ? updatedItem : p)); break;
       case 'budget_template': setBudgetTemplates(budgetTemplates.map(b => b.id === id ? updatedItem : b)); break;
     }
-    // Sync DB
     try {
         await supabase.from((TABLES as any)[type]).update({ data: updatedItem }).eq('id', id);
     } catch (err) { console.warn("Offline Mode: Resource updated locally only."); }
@@ -182,7 +198,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       case 'product': setProducts(products.filter(p => p.id !== id)); break;
       case 'budget_template': setBudgetTemplates(budgetTemplates.filter(b => b.id !== id)); break;
     }
-    // Sync DB
     try {
         await supabase.from((TABLES as any)[type]).delete().eq('id', id);
     } catch (err) { console.warn("Offline Mode: Resource deleted locally only."); }
@@ -191,7 +206,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addDeal = async (deal: Deal) => {
     setDeals([...deals, deal]);
     try {
-        await supabase.from('deals').insert({ id: deal.id, data: deal, user_id: DEFAULT_TENANT_ID });
+        await supabase.from('deals').insert({ id: deal.id, data: deal, user_id: currentBusinessId });
     } catch (err) { console.warn("Offline Mode: Deal added locally only."); }
   };
 
@@ -206,13 +221,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const deal = deals.find(d => d.id === id);
     if (!deal) return;
     const updatedDeal = { ...deal, stage };
-    updateDeal(updatedDeal); // This already handles DB sync and error catching
+    updateDeal(updatedDeal);
   };
 
   const addReservation = async (res: Reservation) => {
     setReservations([...reservations, res]);
     try {
-        await supabase.from('reservations').insert({ id: res.id, data: res, user_id: DEFAULT_TENANT_ID });
+        await supabase.from('reservations').insert({ id: res.id, data: res, user_id: currentBusinessId });
     } catch (err) { console.warn("Offline Mode: Reservation added locally only."); }
   };
 
@@ -239,7 +254,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const existingItemIndex = room.consumption.findIndex(c => c.productId === productId);
             
             if (existingItemIndex >= 0) {
-               // Update
                const existingItem = room.consumption[existingItemIndex];
                const newQuantity = existingItem.quantity + quantityDelta;
                
@@ -257,7 +271,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   return { ...room, consumption: newConsumption };
                }
             } else {
-               // Add
                if (quantityDelta <= 0) return room;
                const product = products.find(p => p.id === productId);
                if (!product) return room;
@@ -282,7 +295,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return newReservations;
     });
 
-    // Sync DB after state update logic completes
     if (updatedRes) {
         try {
             await supabase.from('reservations').update({ data: updatedRes }).eq('id', reservationId);
@@ -290,11 +302,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Effect to update resource status based on active reservations
   useEffect(() => {
     const activeRes = reservations.filter(r => r.status === 'checked-in');
-    
-    // Get all occupied room IDs
     const occupiedRoomIds = new Set(activeRes.flatMap(r => r.allocatedRooms.map(ar => ar.roomId)));
     const occupiedBoatIds = new Set(activeRes.flatMap(r => r.boatIds));
     const busyGuideIds = new Set(activeRes.flatMap(r => r.guideIds));
@@ -313,7 +322,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       deals, updateDealStage, addDeal, updateDeal,
       reservations, addReservation, updateReservationStatus, handleConsumption,
       loadingData,
-      theme, toggleTheme
+      theme, toggleTheme,
+      currentBusinessId
     }}>
       {children}
     </AppContext.Provider>

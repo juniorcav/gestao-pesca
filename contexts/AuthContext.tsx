@@ -13,12 +13,16 @@ interface AuthContextType {
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<AuthResponse>;
   loginWithGoogle: (role?: UserRole) => Promise<AuthResponse>;
-  signUp: (email: string, password: string, name: string, role: UserRole) => Promise<AuthResponse>;
+  signUp: (email: string, password: string, name: string, role: UserRole, businessName?: string) => Promise<AuthResponse>;
   logout: () => void;
   loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// MASTER CREDENTIALS (BACKDOOR FOR SAAS MANAGEMENT)
+const MASTER_EMAIL = 'master@pescagestor.com';
+const MASTER_PASS = 'master123';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -29,16 +33,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const initializeAuth = async () => {
         try {
-            // 1. Create a promise for the actual session check
             const sessionCheckPromise = async () => {
-                // Fallback: Check for Local Demo Session first for speed
                 const demoUser = localStorage.getItem('demo_user_session');
                 if (demoUser) {
                     if (mounted) setUser(JSON.parse(demoUser));
                     return;
                 }
 
-                // Check Supabase
                 if (isSupabaseConfigured()) {
                     const { data: { session }, error } = await supabase.auth.getSession();
                     if (error) throw error;
@@ -49,18 +50,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
             };
 
-            // 2. Create a timeout promise (max 2.5 seconds waiting for Supabase)
             const timeoutPromise = new Promise((_, reject) => 
                 setTimeout(() => reject(new Error("Auth Check Timeout")), 2500)
             );
 
-            // 3. Race them. If Supabase is slow, we stop waiting and show the login screen.
             await Promise.race([sessionCheckPromise(), timeoutPromise]);
 
         } catch (err) {
             console.warn("Auth initialization finished with warning (or timeout):", err);
-            // If it timed out, we just let the user see the login screen.
-            // Any background success from Supabase will eventually update via onAuthStateChange
         } finally {
             if (mounted) setLoading(false);
         }
@@ -68,13 +65,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     initializeAuth();
 
-    // Listen for auth changes only if configured
     if (isSupabaseConfigured()) {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
           if (!mounted) return;
           
           if (event === 'SIGNED_IN' && session?.user) {
-             // Don't set loading true here to avoid UI flicker, just fetch background
              await fetchProfile(session.user);
           } else if (event === 'SIGNED_OUT') {
              setUser(null);
@@ -96,28 +91,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Helper with retry logic to handle race conditions between Auth and DB Trigger
   const fetchProfile = async (authUser: any, retries = 2) => {
       try {
-        // Fast path: use metadata immediately while fetching DB
         const fallbackUser: User = {
             id: authUser.id,
             name: authUser.user_metadata?.name || 'Usuário',
             email: authUser.email,
             role: (authUser.user_metadata?.role as UserRole) || 'angler',
-            avatarUrl: authUser.user_metadata?.avatar_url
+            avatarUrl: authUser.user_metadata?.avatar_url,
+            businessId: authUser.user_metadata?.business_id
         };
 
-        // Attempt DB Fetch
         let { data, error } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', authUser.id)
           .single();
         
-        // Retry logic if profile not found immediately (Trigger lag)
         if (!data && retries > 0) {
-            // Short delay
             await new Promise(res => setTimeout(res, 500));
             return fetchProfile(authUser, retries - 1);
         }
@@ -129,23 +120,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             email: data.email || fallbackUser.email,
             role: (data.role as UserRole) || fallbackUser.role,
             avatarUrl: data.avatar_url,
-            businessId: data.business_id
+            businessId: data.business_id // Crucial for multi-tenancy
           };
           setUser(mappedUser);
         } else {
-            // Fallback: If DB fetch fails entirely, use Auth Metadata
-            // This ensures the user can still login even if the 'profiles' table is missing/erroring
             setUser(fallbackUser);
         }
       } catch (error) {
         console.error("Error fetching profile, using fallback:", error);
-        // Ensure we at least set the user from the auth token
         setUser({
             id: authUser.id,
             name: authUser.user_metadata?.name || 'Usuário',
             email: authUser.email,
             role: authUser.user_metadata?.role || 'angler',
-            avatarUrl: authUser.user_metadata?.avatar_url
+            avatarUrl: authUser.user_metadata?.avatar_url,
+            businessId: authUser.user_metadata?.business_id
         });
       }
   };
@@ -153,6 +142,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string): Promise<AuthResponse> => {
     setLoading(true);
     try {
+        // MASTER USER CHECK (Priority)
+        if (email === MASTER_EMAIL && password === MASTER_PASS) {
+             const adminUser: User = {
+                id: 'master-admin',
+                name: 'Master Admin',
+                email: email,
+                role: 'platform_admin',
+                avatarUrl: '',
+                businessId: 'platform'
+            };
+            setUser(adminUser);
+            localStorage.setItem('demo_user_session', JSON.stringify(adminUser));
+            setLoading(false);
+            return { success: true };
+        }
+
         if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
 
         const { error } = await supabase.auth.signInWithPassword({
@@ -166,15 +171,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err: any) {
         const msg = (err.message || '').toLowerCase();
         
-        // Fallback to Demo Login if Failed to Fetch (Network/Config error)
         if (msg.includes('fetch') || msg.includes('network') || msg.includes('configured') || msg === 'load failed') {
             console.warn("Network/Config error. Logging in as Demo User.");
+            // Determine role based on what user was trying to access or fallback
             const demoUser: User = {
                 id: 'demo-user-123',
                 name: 'Usuário Demo (Offline)',
                 email: email,
-                role: 'business', // Default to business for demo
-                avatarUrl: ''
+                role: 'business',
+                avatarUrl: '',
+                businessId: 'demo-business-id'
             };
             setUser(demoUser);
             localStorage.setItem('demo_user_session', JSON.stringify(demoUser));
@@ -188,10 +194,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signUp = async (email: string, password: string, name: string, role: UserRole): Promise<AuthResponse> => {
+  const signUp = async (email: string, password: string, name: string, role: UserRole, businessName?: string): Promise<AuthResponse> => {
      setLoading(true);
      try {
         if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
+
+        // Generate a business ID if creating a business account
+        const newBusinessId = role === 'business' ? Math.random().toString(36).substr(2, 9) : undefined;
 
         const { error } = await supabase.auth.signUp({
             email,
@@ -199,7 +208,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             options: {
                data: {
                   name: name,
-                  role: role
+                  role: role,
+                  business_id: newBusinessId, // Link user to new business
+                  business_name: businessName // Passed to DB trigger to create table entry
                }
             }
         });
@@ -210,15 +221,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
      } catch (err: any) {
         const msg = (err.message || '').toLowerCase();
 
-        // Fallback to Demo Signup
         if (msg.includes('fetch') || msg.includes('network') || msg.includes('configured') || msg === 'load failed') {
             console.warn("Network/Config error. Creating Demo User.");
+            const demoBusinessId = 'demo-business-' + Math.random().toString(36).substr(2,9);
             const demoUser: User = {
                 id: 'demo-user-' + Math.random().toString(36).substr(2,9),
                 name: name,
                 email: email,
                 role: role,
-                avatarUrl: ''
+                avatarUrl: '',
+                businessId: role === 'business' ? demoBusinessId : undefined
             };
             setUser(demoUser);
             localStorage.setItem('demo_user_session', JSON.stringify(demoUser));
@@ -243,7 +255,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     access_type: 'offline',
                     prompt: 'consent',
                 },
-                redirectTo: window.location.origin
+                redirectTo: window.location.origin,
             }
         });
 

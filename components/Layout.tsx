@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { useApp } from '../contexts/AppContext';
+import { useAuth } from '../contexts/AuthContext';
 import { 
   LayoutDashboard, 
   Users, 
@@ -12,13 +13,14 @@ import {
   Anchor,
   Globe,
   Sun,
-  Moon
+  Moon,
+  LogOut,
+  ShieldCheck
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
 const NavItem = ({ to, icon: Icon, label, active, onClick, isExternal }: any) => {
   if (isExternal) {
-      // Calculate full URL for robustness
       const fullLink = `${window.location.href.split('#')[0]}#${to}`;
       return (
         <a
@@ -50,13 +52,19 @@ const NavItem = ({ to, icon: Icon, label, active, onClick, isExternal }: any) =>
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { config, theme, toggleTheme } = useApp();
+  const { user, logout } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const location = useLocation();
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
 
-  // Define nav items
-  const navItems = [
+  const isAdmin = user?.role === 'platform_admin';
+
+  // Dynamic Nav Items based on Role
+  const navItems = isAdmin ? [
+      { to: '/super-admin', icon: ShieldCheck, label: 'Gestão SaaS' },
+      { to: '/', icon: LayoutDashboard, label: 'Visão Geral' }, // Admin can see a summary too
+  ] : [
     { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/crm', icon: Users, label: 'CRM / Vendas' },
     { to: '/checkin', icon: ConciergeBell, label: 'Check-in & Consumo' },
@@ -70,7 +78,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       <div className="md:hidden fixed w-full bg-nature-900 dark:bg-black text-white z-50 flex items-center justify-between p-4 shadow-md">
         <div className="flex items-center space-x-2">
           <Anchor className="text-nature-300" />
-          <span className="font-bold text-lg truncate max-w-[200px]">{config.name}</span>
+          <span className="font-bold text-lg truncate max-w-[200px]">{isAdmin ? 'Admin Panel' : config.name}</span>
         </div>
         <button onClick={toggleSidebar}>
           {isSidebarOpen ? <X /> : <Menu />}
@@ -85,15 +93,15 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       >
         <div className="p-6 flex flex-col items-center border-b border-nature-800 dark:border-gray-800">
           <div className="h-16 w-16 bg-nature-100 dark:bg-gray-800 rounded-full flex items-center justify-center text-nature-800 dark:text-nature-400 mb-3 shadow-inner overflow-hidden">
-             {config.logoUrl ? (
+             {config.logoUrl && !isAdmin ? (
                 <img src={config.logoUrl} alt="Logo" className="h-full w-full object-cover" />
              ) : (
                 <Anchor size={32} />
              )}
           </div>
-          <h1 className="text-xl font-bold text-center leading-tight truncate w-full">{config.name}</h1>
+          <h1 className="text-xl font-bold text-center leading-tight truncate w-full">{isAdmin ? 'Super Admin' : config.name}</h1>
           <p className="text-xs text-nature-300 mt-1 uppercase tracking-wide">
-             Gestão do Negócio
+             {isAdmin ? 'Gestão da Plataforma' : 'Gestão do Negócio'}
           </p>
         </div>
 
@@ -107,26 +115,42 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             />
           ))}
 
-          {/* Link to Public Site */}
-          <NavItem 
-            to="/landing" 
-            icon={Globe} 
-            label="Visualizar Site" 
-            isExternal={true}
-          />
+          {/* Link to Public Site (Only for businesses) */}
+          {!isAdmin && (
+              <NavItem 
+                to="/landing" 
+                icon={Globe} 
+                label="Visualizar Site" 
+                isExternal={true}
+              />
+          )}
         </nav>
 
-        {/* Theme Toggle Bottom */}
+        {/* User & Theme Footer */}
         <div className="p-4 bg-nature-950 dark:bg-gray-900 bg-opacity-30 border-t border-nature-800 dark:border-gray-800">
-           <div className="flex items-center justify-between px-1">
+           <div className="flex items-center justify-between px-1 mb-3">
              <span className="text-xs font-medium text-nature-300">Tema</span>
              <button 
                 onClick={toggleTheme}
                 className="p-1.5 rounded-full bg-nature-800 dark:bg-gray-800 text-nature-200 hover:text-white transition-colors"
-                title="Alternar Tema"
              >
                 {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
              </button>
+           </div>
+           
+           <div className="flex items-center justify-between pt-3 border-t border-nature-800 dark:border-gray-700">
+               <div className="flex items-center gap-2 overflow-hidden">
+                   <div className="h-8 w-8 rounded-full bg-nature-700 flex items-center justify-center text-xs font-bold">
+                       {user?.name?.charAt(0) || 'U'}
+                   </div>
+                   <div className="flex flex-col truncate">
+                       <span className="text-xs font-bold truncate">{user?.name}</span>
+                       <span className="text-[10px] text-nature-400 truncate">{user?.email}</span>
+                   </div>
+               </div>
+               <button onClick={logout} className="text-nature-400 hover:text-white p-1">
+                   <LogOut size={16} />
+               </button>
            </div>
         </div>
       </aside>
