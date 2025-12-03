@@ -4,6 +4,30 @@ export type ResourceType = 'room' | 'boat' | 'guide' | 'product' | 'budget_templ
 
 export type UserRole = 'business' | 'angler' | 'admin' | 'platform_admin';
 
+export interface LodgeConfig {
+  name: string;
+  logoUrl?: string;
+  description: string;
+  phone: string;
+  email: string;
+  address: string;
+  
+  // Location Details
+  nearestAirport: string;
+  airportDistance: string;
+  mainRiver: string;
+  mainFishes: string;
+  
+  // Media
+  galleryImages: string[];
+  promotionalVideo?: string;
+
+  // Services Offered
+  services: string[];
+
+  policy: string;
+}
+
 export interface Business {
   id: string;
   name: string;
@@ -11,6 +35,7 @@ export interface Business {
   plan: 'free' | 'pro' | 'enterprise';
   status: 'active' | 'suspended';
   createdAt: string;
+  config?: LodgeConfig; // Added config field
 }
 
 export interface User {
@@ -152,28 +177,4 @@ export interface Deal {
   notes: string;
   budget?: BudgetDetails;
   payments: Payment[];
-}
-
-export interface LodgeConfig {
-  name: string;
-  logoUrl?: string;
-  description: string;
-  phone: string;
-  email: string;
-  address: string;
-  
-  // Location Details
-  nearestAirport: string;
-  airportDistance: string;
-  mainRiver: string;
-  mainFishes: string;
-  
-  // Media
-  galleryImages: string[];
-  promotionalVideo?: string;
-
-  // Services Offered
-  services: string[];
-
-  policy: string;
 }

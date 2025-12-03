@@ -1,3 +1,4 @@
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { 
   LodgeConfig, Room, Boat, Guide, Product, Deal, Reservation, ConsumptionItem, BudgetItemTemplate, Business 
@@ -48,7 +49,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [loadingData, setLoadingData] = useState(true);
   
   // Identifying the tenant (business)
-  const currentBusinessId = user?.id || ''; // In this architecture, user_id of the owner IS the filter
+  // Now explicitly using the businessId from the user profile
+  const currentBusinessId = user?.businessId || '';
 
   // --- THEME ---
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -85,34 +87,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const fetchData = async () => {
         setLoadingData(true);
         try {
-            // 1. Config
-            const { data: configData } = await supabase.from('business_settings').select('config').eq('user_id', currentBusinessId).single();
-            if (configData) setConfig(configData.config);
+            // Only fetch if we have a business ID (or if we want to support admins seeing stuff)
+            if (currentBusinessId) {
+                // 1. Config (Fetched directly from businesses table 'config' column)
+                const { data: businessData, error: configError } = await supabase
+                    .from('businesses')
+                    .select('config')
+                    .eq('id', currentBusinessId)
+                    .single();
+                
+                if (businessData && businessData.config) {
+                    setConfig(businessData.config);
+                } else if (configError) {
+                    console.error("Error fetching config:", configError);
+                }
 
-            // 2. Resources (Map JSONB 'data' column to object)
-            // Helper to unwrap Supabase response: { id: '...', user_id: '...', data: { ...fields } } -> { id: '...', ...fields }
-            const unwrap = (rows: any[]) => rows.map((row: any) => ({ ...row.data, id: row.id }));
+                // Helper to unwrap Supabase response
+                const unwrap = (rows: any[]) => rows.map((row: any) => ({ ...row.data, id: row.id }));
 
-            const { data: r } = await supabase.from('rooms').select('*').eq('user_id', currentBusinessId);
-            if (r) setRooms(unwrap(r));
+                const { data: r } = await supabase.from('rooms').select('*').eq('business_id', currentBusinessId);
+                if (r) setRooms(unwrap(r));
 
-            const { data: b } = await supabase.from('boats').select('*').eq('user_id', currentBusinessId);
-            if (b) setBoats(unwrap(b));
+                const { data: b } = await supabase.from('boats').select('*').eq('business_id', currentBusinessId);
+                if (b) setBoats(unwrap(b));
 
-            const { data: g } = await supabase.from('guides').select('*').eq('user_id', currentBusinessId);
-            if (g) setGuides(unwrap(g));
+                const { data: g } = await supabase.from('guides').select('*').eq('business_id', currentBusinessId);
+                if (g) setGuides(unwrap(g));
 
-            const { data: p } = await supabase.from('products').select('*').eq('user_id', currentBusinessId);
-            if (p) setProducts(unwrap(p));
+                const { data: p } = await supabase.from('products').select('*').eq('business_id', currentBusinessId);
+                if (p) setProducts(unwrap(p));
 
-            const { data: t } = await supabase.from('budget_templates').select('*').eq('user_id', currentBusinessId);
-            if (t) setBudgetTemplates(unwrap(t));
+                const { data: t } = await supabase.from('budget_templates').select('*').eq('business_id', currentBusinessId);
+                if (t) setBudgetTemplates(unwrap(t));
 
-            const { data: d } = await supabase.from('deals').select('*').eq('user_id', currentBusinessId);
-            if (d) setDeals(unwrap(d));
+                const { data: d } = await supabase.from('deals').select('*').eq('business_id', currentBusinessId);
+                if (d) setDeals(unwrap(d));
 
-            const { data: res } = await supabase.from('reservations').select('*').eq('user_id', currentBusinessId);
-            if (res) setReservations(unwrap(res));
+                const { data: res } = await supabase.from('reservations').select('*').eq('business_id', currentBusinessId);
+                if (res) setReservations(unwrap(res));
+            }
 
             // Super Admin Data
             if (user.role === 'platform_admin') {
@@ -134,16 +147,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // --- CRUD ACTIONS (SUPABASE) ---
 
   const updateConfig = async (newConfig: LodgeConfig) => {
+      if (!currentBusinessId) return;
       setConfig(newConfig);
-      // Upsert based on user_id (business owner)
-      const { error } = await supabase.from('business_settings').upsert(
-          { user_id: currentBusinessId, config: newConfig },
-          { onConflict: 'user_id' }
-      );
+      // Update config column in businesses table
+      const { error } = await supabase.from('businesses').update({ config: newConfig }).eq('id', currentBusinessId);
       if (error) console.error("Error saving config:", error);
   };
 
   const addResource = async (type: string, item: any) => {
+    if (!currentBusinessId) return;
     // Optimistic Update
     switch(type) {
       case 'room': setRooms(prev => [...prev, item]); break;
@@ -157,13 +169,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const tableName = type === 'budget_template' ? 'budget_templates' : type + 's'; // pluralize
     const { error } = await supabase.from(tableName).insert({
         id: item.id,
-        user_id: currentBusinessId,
+        business_id: currentBusinessId,
         data: item
     });
     if (error) console.error(`Error adding ${type}:`, error);
   };
 
   const updateResource = async (type: string, id: string, updatedItem: any) => {
+    if (!currentBusinessId) return;
     // Optimistic
     switch(type) {
       case 'room': setRooms(prev => prev.map(r => r.id === id ? updatedItem : r)); break;
@@ -175,11 +188,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Save to DB
     const tableName = type === 'budget_template' ? 'budget_templates' : type + 's';
-    const { error } = await supabase.from(tableName).update({ data: updatedItem }).eq('id', id).eq('user_id', currentBusinessId);
+    const { error } = await supabase.from(tableName).update({ data: updatedItem }).eq('id', id).eq('business_id', currentBusinessId);
     if (error) console.error(`Error updating ${type}:`, error);
   };
 
   const deleteResource = async (type: string, id: string) => {
+    if (!currentBusinessId) return;
     // Optimistic
     switch(type) {
       case 'room': setRooms(prev => prev.filter(r => r.id !== id)); break;
@@ -191,25 +205,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Save to DB
     const tableName = type === 'budget_template' ? 'budget_templates' : type + 's';
-    const { error } = await supabase.from(tableName).delete().eq('id', id).eq('user_id', currentBusinessId);
+    const { error } = await supabase.from(tableName).delete().eq('id', id).eq('business_id', currentBusinessId);
     if (error) console.error(`Error deleting ${type}:`, error);
   };
 
   // --- CRM ACTIONS ---
 
   const addDeal = async (deal: Deal) => {
+      if (!currentBusinessId) return;
       setDeals(prev => [...prev, deal]);
-      const { error } = await supabase.from('deals').insert({ id: deal.id, user_id: currentBusinessId, data: deal });
+      // Inserting with explicit columns for better DB management
+      const { error } = await supabase.from('deals').insert({ 
+          id: deal.id, 
+          business_id: currentBusinessId, 
+          contact_name: deal.contactName,
+          value: deal.value,
+          stage: deal.stage,
+          data: deal 
+      });
       if (error) console.error("Error adding deal:", error);
   };
   
   const updateDeal = async (deal: Deal) => {
+      if (!currentBusinessId) return;
       setDeals(prev => prev.map(d => d.id === deal.id ? deal : d));
-      const { error } = await supabase.from('deals').update({ data: deal }).eq('id', deal.id).eq('user_id', currentBusinessId);
+      // Updating with explicit columns
+      const { error } = await supabase.from('deals').update({ 
+          contact_name: deal.contactName,
+          value: deal.value,
+          stage: deal.stage,
+          data: deal 
+      }).eq('id', deal.id).eq('business_id', currentBusinessId);
       if (error) console.error("Error updating deal:", error);
   };
 
   const updateDealStage = async (id: string, stage: Deal['stage']) => {
+    if (!currentBusinessId) return;
     let updatedDeal: Deal | undefined;
     setDeals(prev => {
         return prev.map(d => {
@@ -222,7 +253,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     if (updatedDeal) {
-        const { error } = await supabase.from('deals').update({ data: updatedDeal }).eq('id', id).eq('user_id', currentBusinessId);
+        // Update stage column and data json
+        const { error } = await supabase.from('deals').update({ 
+            stage: stage,
+            data: updatedDeal 
+        }).eq('id', id).eq('business_id', currentBusinessId);
         if (error) console.error("Error updating deal stage:", error);
     }
   };
@@ -230,12 +265,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // --- RESERVATION ACTIONS ---
 
   const addReservation = async (res: Reservation) => {
+      if (!currentBusinessId) return;
       setReservations(prev => [...prev, res]);
-      const { error } = await supabase.from('reservations').insert({ id: res.id, user_id: currentBusinessId, data: res });
+      const { error } = await supabase.from('reservations').insert({ id: res.id, business_id: currentBusinessId, data: res });
       if (error) console.error("Error adding reservation:", error);
   };
 
   const updateReservationStatus = async (id: string, status: Reservation['status']) => {
+      if (!currentBusinessId) return;
       let updatedRes: Reservation | undefined;
       setReservations(prev => {
           return prev.map(r => {
@@ -248,12 +285,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       if (updatedRes) {
-          const { error } = await supabase.from('reservations').update({ data: updatedRes }).eq('id', id).eq('user_id', currentBusinessId);
+          const { error } = await supabase.from('reservations').update({ data: updatedRes }).eq('id', id).eq('business_id', currentBusinessId);
           if (error) console.error("Error updating reservation status:", error);
       }
   };
 
   const handleConsumption = async (reservationId: string, roomId: string, productId: string, quantityDelta: number) => {
+    if (!currentBusinessId) return;
     let updatedRes: Reservation | undefined;
     
     setReservations(prev => {
@@ -310,7 +348,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Save to DB
     if (updatedRes) {
-        const { error } = await supabase.from('reservations').update({ data: updatedRes }).eq('id', reservationId).eq('user_id', currentBusinessId);
+        const { error } = await supabase.from('reservations').update({ data: updatedRes }).eq('id', reservationId).eq('business_id', currentBusinessId);
         if (error) console.error("Error saving consumption:", error);
     }
   };

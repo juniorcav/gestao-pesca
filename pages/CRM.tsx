@@ -1,9 +1,10 @@
+
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../contexts/AppContext';
 import { Deal, DealStage, BudgetItem, BudgetDetails, ResourceType, Payment, Reservation, AllocatedRoom } from '../types';
 import { 
   Plus, MessageCircle, MoreHorizontal, ArrowLeft, ArrowRight, DollarSign, 
-  MapPin, Calendar, Users, Fish, Trash2, Save, FileDown, CheckCircle, Ship, BedDouble, User
+  MapPin, Calendar, Users, Fish, Trash2, Save, FileDown, CheckCircle, Ship, BedDouble, User, FileText
 } from 'lucide-react';
 
 const STAGES: { id: DealStage; label: string; color: string }[] = [
@@ -131,6 +132,7 @@ const CRM = () => {
   const [tripInfo, setTripInfo] = useState({ checkIn: '', checkOut: '', fishingDays: 1, people: 1 });
   const [budgetItems, setBudgetItems] = useState<BudgetItem[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [notes, setNotes] = useState('');
   
   // Resource Adder State
   const [resourceType, setResourceType] = useState<'budget_template' | 'custom'>('budget_template');
@@ -163,6 +165,7 @@ const CRM = () => {
     setTripInfo({ checkIn: '', checkOut: '', fishingDays: 1, people: 1 });
     setBudgetItems([]);
     setPayments([]);
+    setNotes('');
     setResourceType('budget_template');
     setCustomItemName('');
     setCustomItemDesc('');
@@ -197,6 +200,7 @@ const CRM = () => {
       city: deal.budget?.city || ''
     });
     setPayments(deal.payments || []);
+    setNotes(deal.notes || '');
     
     if (deal.budget) {
       setTripInfo({
@@ -301,7 +305,7 @@ const CRM = () => {
         stage: dealStage, 
         tags: [tripInfo.fishingDays + ' dias', tripInfo.people + ' pessoas'],
         lastInteraction: new Date().toISOString(),
-        notes: `Orçamento gerado para ${tripInfo.people} pessoas em ${clientInfo.city}.`,
+        notes: notes || `Orçamento para ${tripInfo.people} pessoas.`,
         budget: budget,
         payments: payments
     };
@@ -512,6 +516,13 @@ const CRM = () => {
                       <div class="info-row"><span class="label">Local:</span><span class="value">Pantanal MT</span></div>
                   </div>
               </div>
+
+              ${notes ? `
+                  <div class="box" style="margin-bottom: 20px; background: #fffbeb; padding: 10px; border-radius: 4px; border: 1px solid #fcd34d;">
+                      <h3 style="color: #92400e; border-bottom-color: #fcd34d;">Observações</h3>
+                      <p style="font-size: 12px; color: #92400e; margin: 0;">${notes}</p>
+                  </div>
+              ` : ''}
 
               <div class="box">
                   <h3>Detalhamento do Pacote</h3>
@@ -738,6 +749,18 @@ const CRM = () => {
                          onChange={e => setTripInfo({...tripInfo, people: parseInt(e.target.value) || 0})}
                        />
                     </div>
+                 </div>
+                 
+                 {/* NOTES FIELD */}
+                 <div>
+                    <label className="label flex items-center gap-1"><FileText size={12}/> Observações Gerais do Orçamento</label>
+                    <textarea 
+                        className="input-field"
+                        rows={2}
+                        placeholder="Detalhes adicionais, restrições alimentares, solicitações especiais..."
+                        value={notes}
+                        onChange={e => setNotes(e.target.value)}
+                    />
                  </div>
               </div>
 
@@ -1259,7 +1282,7 @@ const CRM = () => {
             outline: none; 
             color: #1f2937; 
             background-color: #f9fafb; 
-            transition: all 0.2s;
+            transition: all 0.2s; 
             box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
          }
          .dark .input-field {
