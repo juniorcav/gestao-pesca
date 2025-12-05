@@ -1,8 +1,8 @@
 
 import React from 'react';
-import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { AppProvider, useApp } from './contexts/AppContext';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AppProvider } from './contexts/AppContext';
+import { AuthProvider } from './contexts/AuthContext';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 

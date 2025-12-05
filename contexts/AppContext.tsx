@@ -309,8 +309,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // Generate Invite Link logic (without DB write)
       // The actual User creation happens when they sign up via the link
-      const baseUrl = window.location.origin + window.location.pathname;
-      const inviteUrl = `${baseUrl}#/login?invite=true&email=${encodeURIComponent(member.email || '')}&name=${encodeURIComponent(member.name || '')}&bid=${currentBusinessId}&bname=${encodeURIComponent(config.name)}`;
+      const baseUrl = window.location.origin;
+      const inviteUrl = `${baseUrl}/#/login?invite=true&email=${encodeURIComponent(member.email || '')}&name=${encodeURIComponent(member.name || '')}&bid=${currentBusinessId}&bname=${encodeURIComponent(config.name)}`;
 
       return { 
           success: true, 
