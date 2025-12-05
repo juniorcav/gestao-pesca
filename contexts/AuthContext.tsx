@@ -12,7 +12,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<AuthResponse>;
   loginWithGoogle: (role?: UserRole) => Promise<AuthResponse>;
-  signUp: (email: string, password: string, name: string, role: UserRole, businessName?: string) => Promise<AuthResponse>;
+  signUp: (email: string, password: string, name: string, role: UserRole, businessName?: string, businessId?: string) => Promise<AuthResponse>;
   logout: () => void;
   loading: boolean;
 }
@@ -95,7 +95,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
-  const signUp = async (email: string, password: string, name: string, role: UserRole, businessName?: string): Promise<AuthResponse> => {
+  const signUp = async (email: string, password: string, name: string, role: UserRole, businessName?: string, businessId?: string): Promise<AuthResponse> => {
      setLoading(true);
      
      // Pass metadata so the SQL Trigger can populate the profiles/businesses tables
@@ -106,7 +106,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
              data: {
                  name,
                  role,
-                 business_name: businessName
+                 business_name: businessName,
+                 business_id: businessId // Pass existing business ID if invite
              }
          }
      });

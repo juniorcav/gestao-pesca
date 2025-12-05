@@ -4,6 +4,21 @@ export type ResourceType = 'room' | 'boat' | 'guide' | 'product' | 'budget_templ
 
 export type UserRole = 'business' | 'angler' | 'admin' | 'platform_admin';
 
+export interface PlatformSettings {
+  id: number;
+  appName: string;
+  logoUrl?: string;
+  primaryColor: string; // Hex Code
+}
+
+export interface Plan {
+  id: string;
+  name: string;
+  price: number;
+  features: string[];
+  active: boolean;
+}
+
 export interface LodgeConfig {
   name: string;
   logoUrl?: string;
@@ -20,6 +35,7 @@ export interface LodgeConfig {
   
   // Media
   galleryImages: string[];
+  pdfImages?: string[]; // Selected images for the complete PDF
   promotionalVideo?: string;
 
   // Services Offered
@@ -32,10 +48,10 @@ export interface Business {
   id: string;
   name: string;
   ownerId: string;
-  plan: 'free' | 'pro' | 'enterprise';
+  plan: 'free' | 'pro' | 'enterprise'; // Should ideally match Plan names
   status: 'active' | 'suspended';
   createdAt: string;
-  config?: LodgeConfig; // Added config field
+  config?: LodgeConfig;
 }
 
 export interface User {

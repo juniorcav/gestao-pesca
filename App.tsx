@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AppProvider, useApp } from './contexts/AppContext';
@@ -12,28 +13,13 @@ import Resources from './pages/Resources';
 import FrontDesk from './pages/FrontDesk';
 import Settings from './pages/Settings';
 import SuperAdmin from './pages/SuperAdmin';
-import LandingPage from './pages/LandingPage';
 import Login from './pages/Login';
+import LandingPage from './pages/LandingPage';
 
 // Helper to redirect based on auth status and role
 const RootRedirect = () => {
-  const { isAuthenticated, user, loading } = useAuth();
-  const { config, loadingData } = useApp();
-  
-  if (loading || loadingData) return <div className="flex h-screen items-center justify-center dark:bg-gray-900"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-nature-600"></div></div>;
-  
-  if (isAuthenticated) {
-     if (user?.role === 'platform_admin') return <Navigate to="/super-admin" replace />;
-     
-     // Check if First Time Setup is needed (Generic Name and Default Description)
-     if (user?.role === 'business' && config.name === "Nome do Negócio" && !config.address) {
-         return <Navigate to="/config" state={{ firstSetup: true }} replace />;
-     }
-     
-     return <Navigate to="/dashboard" replace />;
-  }
-  
-  return <Navigate to="/landing" replace />;
+  // Directly show Login screen as requested
+  return <Navigate to="/login" replace />;
 };
 
 const App: React.FC = () => {
@@ -43,8 +29,8 @@ const App: React.FC = () => {
           <HashRouter>
             <Routes>
               {/* Public Routes */}
-              <Route path="/landing" element={<LandingPage />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/landing" element={<LandingPage />} />
               
               {/* Protected App Routes */}
               <Route path="/dashboard" element={<ProtectedRoute allowedRoles={['business', 'platform_admin']}><Layout><Dashboard /></Layout></ProtectedRoute>} />

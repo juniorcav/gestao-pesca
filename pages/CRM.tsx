@@ -1,11 +1,13 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../contexts/AppContext';
 import { Deal, DealStage, BudgetItem, BudgetDetails, ResourceType, Payment, Reservation, AllocatedRoom } from '../types';
 import { 
   Plus, MessageCircle, MoreHorizontal, ArrowLeft, ArrowRight, DollarSign, 
-  MapPin, Calendar, Users, Fish, Trash2, Save, FileDown, CheckCircle, Ship, BedDouble, User, FileText
+  MapPin, Calendar, Users, Fish, Trash2, Save, FileDown, CheckCircle, Ship, BedDouble, User, FileText, ChevronDown, Image as ImageIcon, LayoutTemplate, X, Check
 } from 'lucide-react';
+
+declare const html2pdf: any;
 
 const STAGES: { id: DealStage; label: string; color: string }[] = [
   { id: 'new', label: 'Novo', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
@@ -139,7 +141,8 @@ const CRM = () => {
   const [selectedResourceId, setSelectedResourceId] = useState('');
   const [customItemName, setCustomItemName] = useState('');
   const [customItemDesc, setCustomItemDesc] = useState('');
-  const [itemPrice, setItemPrice] = useState(0);
+  // Use string | number to handle empty state better during typing
+  const [itemPrice, setItemPrice] = useState<string | number>(0);
   const [itemQty, setItemQty] = useState(1);
 
   // Payment Adder State
@@ -157,6 +160,22 @@ const CRM = () => {
   // Guest mapping: roomId -> Array of Guest Names
   const [roomGuests, setRoomGuests] = useState<Record<string, {name: string, phone: string}[]>>({});
 
+  // PDF Menu State
+  const [showPdfMenu, setShowPdfMenu] = useState(false);
+
+  const pdfMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+        if (pdfMenuRef.current && !pdfMenuRef.current.contains(event.target as Node)) {
+            setShowPdfMenu(false);
+        }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+        document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   const resetForm = () => {
     setDealId(null);
@@ -237,7 +256,12 @@ const CRM = () => {
         }
     }
 
-    if (!name) return;
+    if (!name) {
+        alert("Por favor, digite o nome do item ou selecione um modelo do catálogo.");
+        return;
+    }
+
+    const price = typeof itemPrice === 'string' ? (parseFloat(itemPrice) || 0) : itemPrice;
 
     const newItem: BudgetItem = {
         id: Math.random().toString(36).substr(2, 9),
@@ -245,8 +269,8 @@ const CRM = () => {
         name,
         description,
         quantity: itemQty,
-        unitPrice: itemPrice,
-        totalPrice: itemPrice * itemQty
+        unitPrice: price,
+        totalPrice: price * itemQty
     };
 
     setBudgetItems([...budgetItems, newItem]);
@@ -255,6 +279,8 @@ const CRM = () => {
     setCustomItemName('');
     setCustomItemDesc('');
     setItemQty(1);
+    setItemPrice(0);
+    setSelectedResourceId('');
   };
 
   const removeItem = (id: string) => {
@@ -375,7 +401,6 @@ const CRM = () => {
 
     const newReservation: Reservation = {
         id: Math.random().toString(36).substr(2, 9),
-        dealId: checkinDeal.id,
         mainContactName: checkinDeal.contactName,
         checkInDate: checkinDeal.budget?.checkInDate || new Date().toISOString().split('T')[0],
         checkOutDate: checkinDeal.budget?.checkOutDate || '',
@@ -396,23 +421,43 @@ const CRM = () => {
 
   // --- PDF LOGIC ---
 
-  const handleGenerateBudgetPDF = () => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-    const htmlContent = generatePDFHtml('Proposta Comercial', false);
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
+  const downloadPDF = (htmlContent: string, filename: string) => {
+      const element = document.createElement('div');
+      element.innerHTML = htmlContent;
+      
+      const opt = {
+        margin: 0, 
+        filename: filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, letterRendering: true, scrollY: 0 },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        // IMPORTANT: CSS manually handles page height to avoid blank pages
+        pagebreak: { mode: ['css', 'legacy'] }
+      };
+
+      html2pdf().from(element).set(opt).save();
+  };
+
+  const handleGenerateBudgetPDF = (type: 'simple' | 'complete') => {
+    // Determine images to use for complete PDF
+    // Prioritize config.pdfImages (max 10 selected in Settings), fallback to galleryImages
+    let selectedImages = config.pdfImages || [];
+    if (selectedImages.length === 0 && config.galleryImages) {
+        selectedImages = config.galleryImages.slice(0, 10);
+    }
+    
+    const htmlContent = generatePDFHtml('Proposta Comercial', false, type, selectedImages);
+    downloadPDF(htmlContent, `Orcamento_${clientInfo.name.replace(/\s+/g, '_')}.pdf`);
+    
+    setShowPdfMenu(false);
   };
 
   const handleGenerateBookingPDF = () => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-    const htmlContent = generatePDFHtml('Confirmação de Reserva', true);
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
+    const htmlContent = generatePDFHtml('Confirmação de Reserva', true, 'simple');
+    downloadPDF(htmlContent, `Reserva_${clientInfo.name.replace(/\s+/g, '_')}.pdf`);
   };
 
-  const generatePDFHtml = (title: string, isBooking: boolean) => {
+  const generatePDFHtml = (title: string, isBooking: boolean, type: 'simple' | 'complete' = 'simple', customImages?: string[]) => {
     // NOTE: PDFs are generated with white background always for printing purposes
     const today = new Date().toLocaleDateString('pt-BR');
     const validUntil = new Date();
@@ -423,8 +468,220 @@ const CRM = () => {
 
     // Logo Logic
     const logoHtml = config.logoUrl 
-        ? `<img src="${config.logoUrl}" style="height: 80px; width: auto; object-fit: contain;" alt="Logo"/>`
-        : `<div class="brand-logo"><span style="font-size: 30px;">⚓</span></div>`;
+        ? `<img src="${config.logoUrl}" style="height: 60px; width: auto; object-fit: contain;" alt="Logo"/>`
+        : `<div class="brand-logo"><span style="font-size: 24px;">⚓</span></div>`;
+
+    // --- Complete PDF: Landing Page Style Content ---
+    let editorialPagesHtml = '';
+    
+    if (type === 'complete') {
+        const availableImages = (customImages && customImages.length > 0) ? customImages : (config.galleryImages || []);
+        
+        // Image Distribution Strategy:
+        // 1. Cover: Image[0]
+        // 2. Intro: Image[1], Image[2]
+        // 3. Gallery: Image[3] to Image[9] (Max 7 images)
+        
+        const coverImage = availableImages.length > 0 
+            ? availableImages[0] 
+            : 'https://images.unsplash.com/photo-1544551763-46a013bb70d5?auto=format&fit=crop&q=80&w=1920';
+        
+        const introImages = availableImages.slice(1, 3);
+        const galleryImages = availableImages.slice(3, 10);
+
+        editorialPagesHtml = `
+            <!-- PAGE 1: COVER (HERO) -->
+            <div class="page cover-page">
+                <div class="hero-bg" style="background-image: url('${coverImage}');">
+                    <div class="hero-overlay"></div>
+                </div>
+                <div class="cover-content">
+                    <div class="cover-brand">
+                        <div class="cover-logo">
+                           ${config.logoUrl ? `<img src="${config.logoUrl}"/>` : `<div style="font-size:40px;color:white;">⚓</div>`}
+                        </div>
+                        <h1 class="business-name">${config.name}</h1>
+                    </div>
+                    
+                    <div class="cover-titles">
+                        <div class="line"></div>
+                        <h2 class="proposal-title">Proposta Exclusiva</h2>
+                        <h3 class="client-name">Preparado para: ${clientInfo.name}</h3>
+                        <p class="cover-date">${today}</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PAGE 2: INTRO & DETAILS -->
+            <div class="page content-page">
+                <div class="page-header">
+                    <div class="ph-logo">${logoHtml}</div>
+                    <div class="ph-text">${config.name} | Apresentação</div>
+                </div>
+
+                <div class="intro-layout">
+                    <div class="col-text">
+                        <h2 class="section-heading">Experiência Inesquecível</h2>
+                        <p class="description-text">
+                           ${config.description || 'Descubra o melhor da pesca esportiva conosco. Estrutura completa, conforto e os melhores pontos de pesca da região.'}
+                        </p>
+
+                        <div class="info-card">
+                            <h4 class="card-title">Estrutura & Serviços</h4>
+                            <ul class="service-list">
+                                ${(config.services || ['Hospedagem Completa', 'Barcos', 'Guias', 'Gastronomia']).slice(0, 8).map(s => `
+                                    <li><span class="check">✔</span> ${s}</li>
+                                `).join('')}
+                            </ul>
+                        </div>
+
+                        <div class="info-card location-card">
+                            <h4 class="card-title">Localização Privilegiada</h4>
+                            <div class="loc-item"><strong>Rio/Lago:</strong> ${config.mainRiver || 'Não informado'}</div>
+                            <div class="loc-item"><strong>Espécies:</strong> ${config.mainFishes || 'Variadas'}</div>
+                            <div class="loc-item"><strong>Acesso:</strong> ${config.nearestAirport ? `${config.nearestAirport} (${config.airportDistance})` : 'Sob consulta'}</div>
+                            <div class="loc-item"><strong>Endereço:</strong> ${config.address}</div>
+                        </div>
+                        
+                        <div class="contact-footer">
+                           <div>${config.phone}</div>
+                           <div>${config.email}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-visuals">
+                         ${introImages.map(img => `
+                            <div class="visual-frame" style="background-image: url('${img}');"></div>
+                         `).join('')}
+                         ${introImages.length === 0 ? `<div class="visual-placeholder">Sem imagens de introdução</div>` : ''}
+                    </div>
+                </div>
+            </div>
+
+            <!-- PAGE 3: GALLERY (Mosaic) -->
+            ${galleryImages.length > 0 ? `
+            <div class="page content-page">
+                <div class="page-header">
+                    <div class="ph-logo">${logoHtml}</div>
+                    <div class="ph-text">Galeria de Fotos</div>
+                </div>
+                <div class="gallery-container">
+                    <h2 class="section-heading">Nossa Estrutura</h2>
+                    <div class="gallery-grid grid-count-${galleryImages.length}">
+                        ${galleryImages.map((img, i) => `
+                            <div class="g-item item-${i}" style="background-image: url('${img}');"></div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+            ` : ''}
+        `;
+    }
+
+    // --- Budget Page (Standard) ---
+    const budgetPageHtml = `
+          <div class="page content-page">
+              <div class="page-header">
+                  <div class="ph-logo">${logoHtml}</div>
+                  <div class="ph-text">Orçamento Detalhado</div>
+              </div>
+
+              <div class="budget-container">
+                  <div class="doc-info">
+                      <h1 class="doc-main-title">${title}</h1>
+                      <div class="doc-meta-row">
+                          <span><strong>Data:</strong> ${today}</span>
+                          <span><strong>Validade:</strong> ${validUntilStr}</span>
+                          <span class="status-tag ${isBooking ? (remainingBalance <= 0 ? 'paid' : 'pending') : 'proposal'}">
+                            ${isBooking ? (remainingBalance <= 0 ? 'Pago' : 'Pendente') : 'Orçamento'}
+                          </span>
+                      </div>
+                  </div>
+
+                  <!-- Trip Highlights -->
+                  <div class="trip-highlights">
+                      <div class="th-item">
+                          <span class="th-label">Check-in</span>
+                          <span class="th-val">${fmtDate(tripInfo.checkIn)}</span>
+                      </div>
+                      <div class="th-item">
+                          <span class="th-label">Check-out</span>
+                          <span class="th-val">${fmtDate(tripInfo.checkOut)}</span>
+                      </div>
+                      <div class="th-item">
+                          <span class="th-label">Pesca</span>
+                          <span class="th-val">${tripInfo.fishingDays} Dias</span>
+                      </div>
+                      <div class="th-item">
+                          <span class="th-label">Grupo</span>
+                          <span class="th-val">${tripInfo.people} Pessoas</span>
+                      </div>
+                  </div>
+
+                  <!-- Client Info -->
+                  <div class="info-section">
+                      <h3 class="sec-head">Dados do Cliente</h3>
+                      <div class="info-grid">
+                          <div><strong>Nome:</strong> ${clientInfo.name}</div>
+                          <div><strong>Telefone:</strong> ${clientInfo.phone}</div>
+                          <div><strong>Cidade:</strong> ${clientInfo.city}</div>
+                      </div>
+                  </div>
+
+                  ${notes ? `
+                  <div class="info-section">
+                      <h3 class="sec-head">Observações</h3>
+                      <div class="notes-box">${notes}</div>
+                  </div>
+                  ` : ''}
+
+                  <!-- Items Table -->
+                  <div class="table-section">
+                      <h3 class="sec-head">Investimento</h3>
+                      <table>
+                          <thead>
+                              <tr>
+                                  <th style="width: 50%">Descrição</th>
+                                  <th class="text-center">Qtd</th>
+                                  <th class="text-right">Unitário</th>
+                                  <th class="text-right">Total</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              ${budgetItems.map(item => `
+                                  <tr>
+                                      <td>
+                                          <div class="item-name">${item.name}</div>
+                                          ${item.description ? `<div class="item-desc">${item.description}</div>` : ''}
+                                      </td>
+                                      <td class="text-center">${item.quantity}</td>
+                                      <td class="text-right">R$ ${fmt(item.unitPrice)}</td>
+                                      <td class="text-right font-bold">R$ ${fmt(item.totalPrice)}</td>
+                                  </tr>
+                              `).join('')}
+                          </tbody>
+                      </table>
+                  </div>
+
+                  <!-- Totals -->
+                  <div class="totals-section">
+                      <div class="totals-box">
+                           <div class="t-row"><span>Subtotal:</span> <span>R$ ${fmt(totalBudget)}</span></div>
+                           ${isBooking ? `<div class="t-row pay"><span>Pago:</span> <span>(-) R$ ${fmt(totalPaid)}</span></div>` : ''}
+                           <div class="t-row final"><span>${isBooking ? 'Saldo Restante:' : 'Valor Total:'}</span> <span>R$ ${fmt(isBooking ? remainingBalance : totalBudget)}</span></div>
+                      </div>
+                  </div>
+
+                  <!-- Terms -->
+                  <div class="terms-footer">
+                      <h4>Política de Cancelamento e Termos</h4>
+                      <p>${config.policy || 'Consulte nossas políticas de cancelamento e reagendamento.'}</p>
+                  </div>
+              </div>
+              
+              <div class="pdf-footer">Gerado via PescaGestor Pro em ${today}</div>
+          </div>
+    `;
 
     return `
       <!DOCTYPE html>
@@ -433,136 +690,140 @@ const CRM = () => {
           <meta charset="UTF-8">
           <title>${title} - ${clientInfo.name}</title>
           <style>
-              @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Open+Sans:wght@400;600&display=swap');
+              @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&family=Open+Sans:wght@300;400;600&display=swap');
+              
+              /* BASE & RESET */
               @page { size: A4; margin: 0; }
-              body { margin: 0; padding: 0; background: #e5e7eb; font-family: 'Open Sans', sans-serif; color: #374151; -webkit-print-color-adjust: exact; }
-              .page { width: 210mm; min-height: 297mm; padding: 15mm 20mm; margin: 10mm auto; background: white; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); position: relative; box-sizing: border-box; }
-              @media print { body { background: none; margin: 0; } .page { margin: 0; box-shadow: none; width: auto; height: auto; } }
-              .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #16a34a; padding-bottom: 20px; margin-bottom: 30px; }
-              .brand-container { display: flex; align-items: center; gap: 15px; }
-              .brand-logo { width: 60px; height: 60px; background: #166534; color: white; display: flex; align-items: center; justify-content: center; border-radius: 8px; font-size: 24px; font-weight: bold; }
-              .brand-text h1 { font-family: 'Montserrat', sans-serif; font-size: 20px; color: #166534; margin: 0; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
-              .brand-text p { font-size: 11px; color: #6b7280; margin: 2px 0 0; line-height: 1.4; }
-              .doc-meta { text-align: right; }
-              .doc-title { font-family: 'Montserrat', sans-serif; font-size: 24px; font-weight: 700; color: #16a34a; text-transform: uppercase; margin: 0 0 5px 0; }
-              .doc-id { font-size: 12px; color: #9ca3af; }
-              .status-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; margin-top: 8px; }
-              .bg-paid { background: #dcfce7; color: #166534; }
-              .bg-pending { background: #fee2e2; color: #991b1b; }
-              .bg-proposal { background: #e0f2fe; color: #075985; }
-              .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 30px; }
-              .box h3 { font-family: 'Montserrat', sans-serif; font-size: 12px; text-transform: uppercase; color: #166534; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin: 0 0 12px 0; letter-spacing: 0.5px; }
-              .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; border-bottom: 1px dashed #f3f4f6; padding-bottom: 4px; }
-              .info-row:last-child { border-bottom: none; }
-              .label { color: #6b7280; font-weight: 600; }
-              .value { color: #111827; font-weight: 500; }
-              .highlights { display: flex; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 15px 0; margin-bottom: 30px; }
-              .highlight-item { flex: 1; text-align: center; border-right: 1px solid #bbf7d0; }
-              .highlight-item:last-child { border-right: none; }
-              .highlight-label { display: block; font-size: 10px; text-transform: uppercase; color: #166534; font-weight: 600; margin-bottom: 4px; }
-              .highlight-value { font-family: 'Montserrat', sans-serif; font-size: 15px; font-weight: 700; color: #111827; }
-              table { width: 100%; border-collapse: collapse; margin-bottom: 5px; }
-              th { background: #166534; color: white; padding: 10px 12px; text-align: left; font-family: 'Montserrat', sans-serif; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-              td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; font-size: 13px; color: #374151; }
-              tr:nth-child(even) { background-color: #f9fafb; }
-              .col-right { text-align: right; }
-              .col-center { text-align: center; }
+              body { margin: 0; padding: 0; background: #e5e5e5; font-family: 'Open Sans', sans-serif; -webkit-print-color-adjust: exact; }
+              
+              /* PAGE CONTAINER - CRITICAL FOR NO BLANK PAGES */
+              .page {
+                  width: 210mm;
+                  height: 296mm; /* 297mm - 1mm tolerance */
+                  margin: 0 auto;
+                  background: white;
+                  position: relative;
+                  overflow: hidden; /* Prevents spillover */
+                  box-sizing: border-box;
+                  page-break-after: always;
+              }
+              .page:last-child { page-break-after: avoid; }
+
+              /* TYPOGRAPHY COLORS */
+              .text-primary { color: #16a34a; }
+              .bg-primary { background-color: #16a34a; }
+
+              /* --- COVER PAGE STYLES --- */
+              .cover-page { position: relative; padding: 0; }
+              .hero-bg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; background-size: cover; background-position: center; }
+              .hero-overlay { position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 60%, rgba(0,0,0,0.2) 100%); }
+              
+              .cover-content { 
+                  position: relative; z-index: 1; height: 100%; 
+                  display: flex; flex-direction: column; justify-content: space-between; 
+                  padding: 15mm; color: white;
+              }
+              .cover-brand { display: flex; align-items: center; gap: 15px; margin-top: 10mm; }
+              .cover-logo img { height: 60px; width: auto; background: white; padding: 5px; border-radius: 8px; }
+              .business-name { font-family: 'Montserrat', sans-serif; font-size: 24px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; margin: 0; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+              
+              .cover-titles { margin-bottom: 20mm; }
+              .line { width: 60px; height: 6px; background: #22c55e; margin-bottom: 20px; }
+              .proposal-title { font-family: 'Montserrat', sans-serif; font-size: 52px; font-weight: 800; text-transform: uppercase; line-height: 1; margin: 0 0 10px 0; }
+              .client-name { font-size: 20px; font-weight: 300; margin: 0; opacity: 0.9; }
+              .cover-date { font-size: 14px; margin-top: 30px; opacity: 0.7; border-top: 1px solid rgba(255,255,255,0.3); display: inline-block; padding-top: 10px; }
+
+              /* --- CONTENT PAGE STYLES --- */
+              .content-page { padding: 10mm 15mm; }
+              .page-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #16a34a; padding-bottom: 10px; margin-bottom: 25px; height: 20mm; }
+              .ph-logo img { height: 40px; }
+              .ph-text { font-family: 'Montserrat', sans-serif; font-size: 12px; font-weight: 600; color: #166534; text-transform: uppercase; }
+
+              /* INTRO LAYOUT */
+              .intro-layout { display: flex; gap: 30px; height: 230mm; } /* Fixed height to fill page */
+              .col-text { flex: 1.2; display: flex; flex-direction: column; }
+              .col-visuals { flex: 0.8; display: flex; flex-direction: column; gap: 20px; }
+              
+              .section-heading { font-family: 'Montserrat', sans-serif; font-size: 24px; font-weight: 700; color: #16a34a; margin: 0 0 15px 0; }
+              .description-text { font-size: 13px; line-height: 1.6; color: #4b5563; text-align: justify; margin-bottom: 25px; }
+              
+              .info-card { background: #f9fafb; border-left: 4px solid #16a34a; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+              .card-title { font-family: 'Montserrat', sans-serif; font-size: 14px; font-weight: 700; color: #111827; margin: 0 0 10px 0; text-transform: uppercase; }
+              .service-list { list-style: none; padding: 0; margin: 0; font-size: 12px; display: grid; grid-template-columns: 1fr; gap: 6px; }
+              .check { color: #16a34a; font-weight: bold; margin-right: 5px; }
+              
+              .location-card .loc-item { font-size: 12px; margin-bottom: 4px; color: #374151; }
+              
+              .contact-footer { margin-top: auto; font-size: 11px; color: #6b7280; border-top: 1px solid #e5e7eb; padding-top: 10px; }
+
+              .visual-frame { flex: 1; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: relative; background-size: cover; background-position: center; }
+              .visual-placeholder { background: #f3f4f6; flex: 1; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 10px; }
+
+              /* --- GALLERY MOSAIC (SMART GRID) --- */
+              .gallery-container { height: 240mm; display: flex; flex-direction: column; }
+              .gallery-grid { display: grid; gap: 10px; flex: 1; }
+              .g-item { position: relative; overflow: hidden; border-radius: 4px; background: #eee; background-size: cover; background-position: center; background-repeat: no-repeat; }
+              
+              /* Mosaic Variations */
+              .grid-count-1 { grid-template-columns: 1fr; }
+              .grid-count-2 { grid-template-columns: 1fr 1fr; }
+              .grid-count-3 { grid-template-columns: 1fr 1fr; grid-template-rows: 2fr 1fr; }
+              .grid-count-3 .item-0 { grid-column: span 2; }
+              .grid-count-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+              .grid-count-5 { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(3, 1fr); }
+              .grid-count-5 .item-0 { grid-column: span 2; grid-row: span 2; }
+              .grid-count-6 { grid-template-columns: repeat(3, 1fr); grid-template-rows: 2fr 1fr; }
+              .grid-count-6 .item-0 { grid-column: span 2; }
+              .grid-count-6 .item-1 { grid-column: span 1; }
+              .grid-count-7 { grid-template-columns: repeat(3, 1fr); grid-template-rows: 2fr 1fr 1fr; }
+              .grid-count-7 .item-0 { grid-column: span 2; grid-row: span 2; }
+
+              /* --- BUDGET PAGE STYLES --- */
+              .budget-container { height: 240mm; display: flex; flex-direction: column; }
+              .doc-main-title { font-family: 'Montserrat', sans-serif; font-size: 22px; color: #16a34a; text-transform: uppercase; margin: 0 0 10px 0; }
+              .doc-meta-row { display: flex; gap: 20px; font-size: 12px; color: #4b5563; margin-bottom: 20px; align-items: center; }
+              .status-tag { padding: 4px 10px; border-radius: 4px; color: white; font-weight: bold; font-size: 10px; text-transform: uppercase; }
+              .status-tag.proposal { background: #0ea5e9; }
+              .status-tag.paid { background: #16a34a; }
+              .status-tag.pending { background: #dc2626; }
+
+              .trip-highlights { display: flex; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 15px 0; margin-bottom: 20px; }
+              .th-item { flex: 1; text-align: center; border-right: 1px solid #bbf7d0; }
+              .th-item:last-child { border-right: none; }
+              .th-label { display: block; font-size: 10px; text-transform: uppercase; color: #16a34a; font-weight: 700; margin-bottom: 2px; }
+              .th-val { font-family: 'Montserrat', sans-serif; font-size: 14px; font-weight: 600; color: #111827; }
+
+              .info-section { margin-bottom: 20px; }
+              .sec-head { font-family: 'Montserrat', sans-serif; font-size: 12px; color: #111827; text-transform: uppercase; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px; margin: 0 0 10px 0; }
+              .info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; font-size: 12px; gap: 10px; }
+              .notes-box { font-size: 12px; font-style: italic; color: #6b7280; background: #fffbeb; padding: 10px; border-radius: 4px; border: 1px solid #fcd34d; }
+
+              table { width: 100%; border-collapse: collapse; font-size: 12px; }
+              th { background: #16a34a; color: white; padding: 8px 10px; text-align: left; font-weight: 600; text-transform: uppercase; font-size: 10px; }
+              td { padding: 8px 10px; border-bottom: 1px solid #e5e7eb; color: #374151; }
+              tr:nth-child(even) { background: #f9fafb; }
+              .item-name { font-weight: 600; }
+              .item-desc { font-size: 10px; color: #9ca3af; }
+              .text-right { text-align: right; }
+              .text-center { text-align: center; }
               .font-bold { font-weight: 700; }
-              .totals-container { display: flex; justify-content: flex-end; margin-top: 10px; margin-bottom: 40px; }
-              .totals-box { width: 50%; background: #f9fafb; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb; }
-              .total-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; }
-              .total-final { border-top: 2px solid #16a34a; margin-top: 10px; padding-top: 10px; color: #166534; font-size: 16px; font-weight: 800; font-family: 'Montserrat', sans-serif; }
-              .text-green { color: #16a34a; }
-              .terms-container { margin-top: auto; padding-top: 20px; }
-              .terms-box { background: #fafafa; padding: 15px; border-radius: 6px; border: 1px solid #eee; font-size: 10px; color: #6b7280; text-align: justify; line-height: 1.5; margin-bottom: 30px; }
-              .terms-title { font-weight: bold; text-transform: uppercase; margin-bottom: 5px; display: block; color: #374151; }
-              .footer { text-align: center; font-size: 9px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 15px; }
+
+              .totals-section { margin-top: auto; display: flex; justify-content: flex-end; padding-top: 10px; }
+              .totals-box { width: 45%; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 15px; }
+              .t-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px; }
+              .t-row.final { border-top: 2px solid #16a34a; padding-top: 5px; margin-top: 5px; font-size: 14px; font-weight: 700; color: #166534; }
+              .t-row.pay { color: #16a34a; }
+
+              .terms-footer { margin-top: 20px; font-size: 9px; color: #9ca3af; text-align: justify; line-height: 1.4; border-top: 1px solid #e5e7eb; padding-top: 10px; }
+              .terms-footer h4 { margin: 0 0 2px 0; color: #6b7280; text-transform: uppercase; }
+
+              .pdf-footer { position: absolute; bottom: 5mm; left: 0; right: 0; text-align: center; font-size: 8px; color: #d1d5db; }
+
           </style>
       </head>
       <body>
-          <div class="page">
-              <div class="header">
-                  <div class="brand-container">
-                      ${logoHtml}
-                      <div class="brand-text"><h1>${config.name}</h1><p>${config.address}<br>${config.phone} | ${config.email}</p></div>
-                  </div>
-                  <div class="doc-meta">
-                      <h2 class="doc-title">${title}</h2>
-                      <div class="doc-id">Emissão: ${today}</div>
-                      ${!isBooking ? `<div class="doc-id">Validade: ${validUntilStr}</div>` : ''}
-                      <span class="status-badge ${isBooking ? (remainingBalance <= 0 ? 'bg-paid' : 'bg-pending') : 'bg-proposal'}">
-                          ${isBooking ? (remainingBalance <= 0 ? 'Totalmente Pago' : 'Pagamento Pendente') : 'Orçamento'}
-                      </span>
-                  </div>
-              </div>
-
-              <div class="highlights">
-                  <div class="highlight-item"><span class="highlight-label">Check-in</span><span class="highlight-value">${fmtDate(tripInfo.checkIn)}</span></div>
-                  <div class="highlight-item"><span class="highlight-label">Check-out</span><span class="highlight-value">${fmtDate(tripInfo.checkOut)}</span></div>
-                  <div class="highlight-item"><span class="highlight-label">Dias de Pesca</span><span class="highlight-value">${tripInfo.fishingDays} Dias</span></div>
-                  <div class="highlight-item"><span class="highlight-label">Pessoas</span><span class="highlight-value">${tripInfo.people} Pax</span></div>
-              </div>
-
-              <div class="grid-2">
-                  <div class="box">
-                      <h3>Dados do Responsável</h3>
-                      <div class="info-row"><span class="label">Nome:</span><span class="value">${clientInfo.name}</span></div>
-                      <div class="info-row"><span class="label">Telefone:</span><span class="value">${clientInfo.phone}</span></div>
-                      <div class="info-row"><span class="label">Origem:</span><span class="value">${clientInfo.city}</span></div>
-                  </div>
-                  <div class="box">
-                      <h3>Status da Reserva</h3>
-                      <div class="info-row"><span class="label">Código:</span><span class="value">#${dealId ? dealId.substring(0,6).toUpperCase() : 'NOVO'}</span></div>
-                      <div class="info-row"><span class="label">Local:</span><span class="value">Pantanal MT</span></div>
-                  </div>
-              </div>
-
-              ${notes ? `
-                  <div class="box" style="margin-bottom: 20px; background: #fffbeb; padding: 10px; border-radius: 4px; border: 1px solid #fcd34d;">
-                      <h3 style="color: #92400e; border-bottom-color: #fcd34d;">Observações</h3>
-                      <p style="font-size: 12px; color: #92400e; margin: 0;">${notes}</p>
-                  </div>
-              ` : ''}
-
-              <div class="box">
-                  <h3>Detalhamento do Pacote</h3>
-                  <table>
-                      <thead><tr><th style="width: 50%;">Descrição</th><th class="col-center">Qtd</th><th class="col-right">Unit.</th><th class="col-right">Total</th></tr></thead>
-                      <tbody>
-                          ${budgetItems.map(item => `
-                              <tr>
-                                  <td><div style="font-weight: 600;">${item.name}</div>${item.description ? `<div style="font-size: 11px; color: #6b7280;">${item.description}</div>` : ''}</td>
-                                  <td class="col-center">${item.quantity}</td>
-                                  <td class="col-right">R$ ${fmt(item.unitPrice)}</td>
-                                  <td class="col-right font-bold">R$ ${fmt(item.totalPrice)}</td>
-                              </tr>
-                          `).join('')}
-                      </tbody>
-                  </table>
-              </div>
-
-              <div class="totals-container">
-                  <div class="totals-box">
-                      <div class="total-row"><span class="label">Subtotal:</span><span class="value">R$ ${fmt(totalBudget)}</span></div>
-                      ${isBooking ? `<div class="total-row"><span class="label text-green">Total Pago:</span><span class="value text-green">(-) R$ ${fmt(totalPaid)}</span></div>` : ''}
-                      <div class="total-row total-final"><span>${isBooking ? 'Saldo a Pagar:' : 'Valor Total:'}</span><span>R$ ${fmt(isBooking ? remainingBalance : totalBudget)}</span></div>
-                  </div>
-              </div>
-
-              ${isBooking && payments.length > 0 ? `
-                  <div class="box" style="margin-bottom: 30px;">
-                      <h3>Histórico de Pagamentos</h3>
-                      <table><thead><tr><th>Data</th><th>Método</th><th>Obs</th><th class="col-right">Valor</th></tr></thead>
-                          <tbody>${payments.map(p => `<tr><td>${fmtDate(p.date)}</td><td>${p.method}</td><td>${p.notes || '-'}</td><td class="col-right">R$ ${fmt(p.amount)}</td></tr>`).join('')}</tbody>
-                      </table>
-                  </div>
-              ` : ''}
-
-              <div class="terms-container">
-                  <div class="terms-box"><span class="terms-title">Termos</span>${config.policy}</div>
-              </div>
-              <div class="footer">Este documento foi gerado eletronicamente em ${today} através do sistema PescaGestor Pro.</div>
-          </div>
+          ${editorialPagesHtml}
+          ${budgetPageHtml}
       </body>
       </html>
     `;
@@ -655,7 +916,6 @@ const CRM = () => {
             </div>
             
             <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-8">
-              
               {/* Deal Status Selector */}
               <div className="bg-gray-100 dark:bg-gray-800 p-4 rounded-lg flex items-center justify-between border border-gray-200 dark:border-gray-700">
                  <div className="flex flex-col">
@@ -780,6 +1040,7 @@ const CRM = () => {
                              setSelectedResourceId('');
                              setCustomItemName('');
                              setCustomItemDesc('');
+                             setItemPrice(0);
                           }}
                        >
                           <option value="budget_template">Item do Catálogo</option>
@@ -793,13 +1054,13 @@ const CRM = () => {
                           <div className="space-y-2">
                             <input 
                                className="input-field"
-                               placeholder="Ex: Translado Especial"
+                               placeholder="Nome do Item (Ex: Translado)"
                                value={customItemName}
                                onChange={e => setCustomItemName(e.target.value)}
                             />
                             <input 
                                className="input-field text-xs"
-                               placeholder="Descrição opcional..."
+                               placeholder="Descrição detalhada (Opcional)"
                                value={customItemDesc}
                                onChange={e => setCustomItemDesc(e.target.value)}
                             />
@@ -834,7 +1095,8 @@ const CRM = () => {
                           step="0.01"
                           className="input-field"
                           value={itemPrice}
-                          onChange={e => setItemPrice(parseFloat(e.target.value) || 0)}
+                          onChange={e => setItemPrice(e.target.value)}
+                          onBlur={e => setItemPrice(parseFloat(e.target.value) || 0)}
                        />
                     </div>
 
@@ -857,7 +1119,7 @@ const CRM = () => {
                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Item</th>
                              <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Qtd</th>
                              <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Unit.</th>
-                             <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Total</th>
+                             <th className="px-4 py-2 text-right text-xs font-medium text-gray-900 dark:text-white uppercase">Total</th>
                              <th className="px-4 py-2"></th>
                           </tr>
                        </thead>
@@ -1008,17 +1270,39 @@ const CRM = () => {
                     className="px-6 py-2 text-sm font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-800 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/50 flex items-center gap-2 mr-auto"
                   >
                     <CheckCircle size={18} />
-                    Confirmar e Imprimir
+                    Confirmar e Baixar PDF
                   </button>
                ) : (
-                  <button 
-                    type="button" 
-                    onClick={handleGenerateBudgetPDF} 
-                    className="px-6 py-2 text-sm font-medium text-nature-700 dark:text-nature-300 bg-nature-50 dark:bg-nature-900/30 border border-nature-200 dark:border-nature-800 rounded-lg hover:bg-nature-100 dark:hover:bg-nature-900/50 flex items-center gap-2 mr-auto"
-                  >
-                    <FileDown size={18} />
-                    Baixar/Imprimir PDF
-                  </button>
+                  <div className="relative mr-auto" ref={pdfMenuRef}>
+                      <button 
+                        type="button" 
+                        onClick={() => setShowPdfMenu(!showPdfMenu)}
+                        className="px-6 py-2 text-sm font-medium text-nature-700 dark:text-nature-300 bg-nature-50 dark:bg-nature-900/30 border border-nature-200 dark:border-nature-800 rounded-lg hover:bg-nature-100 dark:hover:bg-nature-900/50 flex items-center gap-2"
+                      >
+                        <FileDown size={18} />
+                        Gerar Proposta PDF
+                        <ChevronDown size={14} />
+                      </button>
+
+                      {showPdfMenu && (
+                          <div className="absolute bottom-full left-0 mb-2 w-56 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden z-20">
+                              <button 
+                                onClick={() => handleGenerateBudgetPDF('simple')}
+                                className="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200"
+                              >
+                                  <FileText size={16} className="text-nature-600" />
+                                  <span>Simples (Apenas Valores)</span>
+                              </button>
+                              <button 
+                                onClick={() => handleGenerateBudgetPDF('complete')}
+                                className="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200 border-t border-gray-100 dark:border-gray-700"
+                              >
+                                  <ImageIcon size={16} className="text-blue-600" />
+                                  <span>Completo (Tipo Landing Page)</span>
+                              </button>
+                          </div>
+                      )}
+                  </div>
                )}
 
                <button 
@@ -1142,53 +1426,63 @@ const CRM = () => {
                             <h4 className="text-lg font-bold text-gray-800 dark:text-white border-b dark:border-gray-700 pb-2">2. Registro de Hóspedes</h4>
                             <p className="text-gray-500 dark:text-gray-400 text-sm">Identifique os hóspedes em cada quarto selecionado.</p>
 
-                            <div className="grid grid-cols-1 gap-6">
-                                {selectedRooms.map(roomId => {
-                                    const room = rooms.find(r => r.id === roomId);
-                                    const guests = roomGuests[roomId] || [];
-                                    
-                                    const addGuest = () => {
-                                        const newGuests = [...guests, { name: '', phone: '' }];
-                                        setRoomGuests({ ...roomGuests, [roomId]: newGuests });
-                                    };
+                            {selectedRooms.length === 0 ? (
+                                <div className="text-center py-8 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800">
+                                    <Ship size={48} className="mx-auto text-blue-500 mb-2" />
+                                    <h5 className="font-bold text-blue-700 dark:text-blue-300">Modo Embarcado (Day Use)</h5>
+                                    <p className="text-sm text-blue-600 dark:text-blue-200">
+                                        Nenhum quarto selecionado. O registro de consumo e hóspedes será feito diretamente nos barcos.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 gap-6">
+                                    {selectedRooms.map(roomId => {
+                                        const room = rooms.find(r => r.id === roomId);
+                                        const guests = roomGuests[roomId] || [];
+                                        
+                                        const addGuest = () => {
+                                            const newGuests = [...guests, { name: '', phone: '' }];
+                                            setRoomGuests({ ...roomGuests, [roomId]: newGuests });
+                                        };
 
-                                    const updateGuest = (idx: number, field: 'name'|'phone', val: string) => {
-                                        const newGuests = [...guests];
-                                        newGuests[idx] = { ...newGuests[idx], [field]: val };
-                                        setRoomGuests({ ...roomGuests, [roomId]: newGuests });
-                                    };
+                                        const updateGuest = (idx: number, field: 'name'|'phone', val: string) => {
+                                            const newGuests = [...guests];
+                                            newGuests[idx] = { ...newGuests[idx], [field]: val };
+                                            setRoomGuests({ ...roomGuests, [roomId]: newGuests });
+                                        };
 
-                                    return (
-                                        <div key={roomId} className="border border-gray-200 dark:border-gray-700 rounded-xl p-4 bg-gray-50 dark:bg-gray-800 shadow-sm">
-                                            <div className="flex justify-between items-center mb-3">
-                                                <h5 className="font-bold text-gray-800 dark:text-white">Quarto {room?.number} - {room?.name}</h5>
-                                                <button onClick={addGuest} className="text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 px-3 py-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-1 shadow-sm text-gray-700 dark:text-gray-200">
-                                                    <Plus size={12}/> Adicionar Hóspede
-                                                </button>
+                                        return (
+                                            <div key={roomId} className="border border-gray-200 dark:border-gray-700 rounded-xl p-4 bg-gray-50 dark:bg-gray-800 shadow-sm">
+                                                <div className="flex justify-between items-center mb-3">
+                                                    <h5 className="font-bold text-gray-800 dark:text-white">Quarto {room?.number} - {room?.name}</h5>
+                                                    <button onClick={addGuest} className="text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 px-3 py-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-1 shadow-sm text-gray-700 dark:text-gray-200">
+                                                        <Plus size={12}/> Adicionar Hóspede
+                                                    </button>
+                                                </div>
+                                                <div className="space-y-3">
+                                                    {guests.map((g, idx) => (
+                                                        <div key={idx} className="flex gap-3">
+                                                            <input 
+                                                                placeholder="Nome Completo" 
+                                                                className="flex-1 input-field"
+                                                                value={g.name}
+                                                                onChange={e => updateGuest(idx, 'name', e.target.value)}
+                                                            />
+                                                            <input 
+                                                                placeholder="Telefone" 
+                                                                className="w-1/3 input-field"
+                                                                value={g.phone}
+                                                                onChange={e => updateGuest(idx, 'phone', e.target.value)}
+                                                            />
+                                                        </div>
+                                                    ))}
+                                                    {guests.length === 0 && <p className="text-sm text-gray-400 italic">Nenhum hóspede registrado neste quarto.</p>}
+                                                </div>
                                             </div>
-                                            <div className="space-y-3">
-                                                {guests.map((g, idx) => (
-                                                    <div key={idx} className="flex gap-3">
-                                                        <input 
-                                                            placeholder="Nome Completo" 
-                                                            className="flex-1 input-field"
-                                                            value={g.name}
-                                                            onChange={e => updateGuest(idx, 'name', e.target.value)}
-                                                        />
-                                                        <input 
-                                                            placeholder="Telefone" 
-                                                            className="w-1/3 input-field"
-                                                            value={g.phone}
-                                                            onChange={e => updateGuest(idx, 'phone', e.target.value)}
-                                                        />
-                                                    </div>
-                                                ))}
-                                                {guests.length === 0 && <p className="text-sm text-gray-400 italic">Nenhum hóspede registrado neste quarto.</p>}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -1248,8 +1542,9 @@ const CRM = () => {
                     {checkinStep < 3 ? (
                          <button 
                             onClick={() => {
-                                if (checkinStep === 1 && selectedRooms.length === 0) {
-                                    alert("Selecione pelo menos um quarto.");
+                                // Alteração aqui: Permitir avançar se tiver quarto OU barco
+                                if (checkinStep === 1 && selectedRooms.length === 0 && selectedBoats.length === 0) {
+                                    alert("Selecione pelo menos um quarto OU um barco.");
                                     return;
                                 }
                                 setCheckinStep(checkinStep + 1);

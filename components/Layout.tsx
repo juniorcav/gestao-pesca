@@ -71,7 +71,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   );
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-900 overflow-hidden text-gray-900 dark:text-gray-100 transition-colors duration-300">
+    <div className="flex h-screen w-full bg-gray-50 dark:bg-gray-900 overflow-hidden text-gray-900 dark:text-gray-100 transition-colors duration-300">
       {/* Mobile Header */}
       <div className="md:hidden fixed w-full bg-nature-900 dark:bg-black text-white z-50 flex items-center justify-between p-4 shadow-md">
         <div className="flex items-center space-x-2">
@@ -85,7 +85,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
       {/* Sidebar */}
       <aside 
-        className={`fixed md:relative inset-y-0 left-0 z-40 w-64 bg-nature-900 dark:bg-black text-white transform transition-transform duration-300 ease-in-out ${
+        className={`fixed md:relative inset-y-0 left-0 z-40 w-64 flex-shrink-0 bg-nature-900 dark:bg-black text-white transform transition-transform duration-300 ease-in-out ${
           isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         } flex flex-col shadow-xl border-r border-nature-800 dark:border-gray-800`}
       >
@@ -112,16 +112,6 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               onClick={() => setIsSidebarOpen(false)}
             />
           ))}
-          
-           {/* Link to Public Site */}
-           {user?.role === 'business' && (
-              <NavItem 
-                 to="/landing" 
-                 icon={Anchor} 
-                 label="Visualizar Site" 
-                 isExternal={true}
-              />
-           )}
         </nav>
 
         {/* User & Footer */}
